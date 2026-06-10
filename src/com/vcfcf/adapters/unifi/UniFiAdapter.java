@@ -6,8 +6,8 @@ import com.vcfcf.adapter.http.HttpClientBuilder;
 import com.vcfcf.adapter.http.ManagedHttpClient;
 import com.vcfcf.adapter.json.SimpleJson;
 import com.vcfcf.adapter.retry.RetryPolicy;
+import com.vcfcf.adapter.spi.ResourceSink;
 import com.vcfcf.adapter.spi.VcfCfCollector;
-import com.vcfcf.adapter.spi.VcfCfDiscoverer;
 import com.vcfcf.adapter.spi.VcfCfTester;
 import com.vcfcf.adapter.stitch.RelationshipBuilder;
 import com.vcfcf.adapter.stitch.SuiteApiStitcher;
@@ -32,23 +32,39 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * UniFi Controller adapter — framework v2 (build 4).
+ * UniFi Controller adapter — framework v2 (build 5).
  *
- * <p><b>Build 4 — collect-path discovery (VCF Ops 9.0.2 onDiscover() gap).</b>
- * On 9.0.2 the server's "Auto Discover" task never reaches {@code onDiscover()}
- * for this adapter3-type collector, so build 3 heartbeat GREEN but discovered
- * zero resources. The collector now overrides {@code needsRediscovery()=true}
- * and runs the shared {@link #enumerateResources} on the collect path via
- * {@code rediscover()} → {@link #registerNewResource(ResourceConfig)}. The
- * platform runs that before the per-resource collect loop on the first cycle
- * after configure, so a freshly-configured instance populates on its first
- * collect. {@code getDiscoverer()} stays wired to the same shared enumeration
- * for forward compatibility and platforms that do call {@code onDiscover()}.
+ * <p><b>Build 5 — framework-plumbed collect-path discovery + framework 401
+ * recovery + edge persistence.</b> Three changes, all behaviour-preserving:
+ *
+ * <ul>
+ *   <li><b>Edge persistence + 401 recovery (framework jar pickup, no adapter
+ *       code).</b> Build 4 edges left the adapter correct but were dropped at
+ *       platform persistence by the framework {@code RelationshipBuilder}
+ *       ResourceKey arg-order bug (now {@code new ResourceKey(name, kind,
+ *       adapterKind)}); and an expired {@code TOKEN} cookie was never
+ *       invalidated, 401-storming the instance to ERROR indefinitely. Both are
+ *       fixed in the bundled {@code vcfcf-adapter-base.jar}: every UniFi call
+ *       routes through {@code ManagedHttpClient} with {@code SessionCookieAuth},
+ *       so {@code ManagedHttpClient.checkAuthRetry} now invalidates the cookie
+ *       and replays once on 401/403. UniFi caches no CSRF token (its reads are
+ *       cookie-only GETs — see {@link UniFiApiClient}), so a re-login refreshes
+ *       the only session artifact and recovers cleanly. No adapter source change
+ *       was needed for either fix.</li>
+ *   <li><b>Discovery is now framework-plumbed (§22).</b> The build-4 hand-rolled
+ *       {@code needsRediscovery()=true}/{@code rediscover()} dual-path pattern is
+ *       replaced by the framework opt-in {@link #discoverOnCollect()}{@code =true}
+ *       over a single {@code protected} {@link #enumerateResources(ResourceSink)}.
+ *       The framework default {@code getDiscoverer()} wires the same body for the
+ *       {@code onDiscover()} path. Behaviour is identical; the resource keys
+ *       ({@link #rcOf}) are byte-identical to build 4, so existing resources do
+ *       not duplicate.</li>
+ * </ul>
  *
  * <p><b>v1 → v2 SPI port.</b> Re-homed from aria-ops-core
  * ({@code UnlicensedAdapter} + {@code com.vmware.tvs.*}) onto {@link VcfCfAdapter}
  * (which extends {@code AdapterBase} directly) and the {@code com.vcfcf.adapter.spi}
- * roles: {@link VcfCfTester}, {@link VcfCfDiscoverer}, {@link VcfCfCollector}. No
+ * roles: {@link VcfCfTester}, {@link VcfCfCollector}. No
  * {@code com.vmware.tvs.*}, no {@code Resource}/{@code ResourceCollection}, no
  * JAX-WS. Transport is the framework {@link ManagedHttpClient} over the existing
  * UniFi Network/Protect REST client ({@link UniFiApiClient}); the
@@ -242,44 +258,57 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 	}
 
 	// -----------------------------------------------------------------------
-	// getDiscoverer — enumerate the UniFi resource tree
+	// Discovery — framework-plumbed (§22 discoverOnCollect)
 	// -----------------------------------------------------------------------
 
+	/**
+	 * Drive resource discovery from the collect path on every cycle.
+	 *
+	 * <p><b>Why (VCF Ops 9.0.2 root cause).</b> On 9.0.2 the server's "Auto
+	 * Discover" task never reaches {@code onDiscover()} for this adapter3-type
+	 * collector, so an instance would heartbeat GREEN but discover zero
+	 * resources indefinitely (the build-3 symptom). Returning {@code true} here
+	 * makes the framework call {@link #enumerateResources(ResourceSink)} with
+	 * {@link #registerNewResource(ResourceConfig)} at the top of every collect
+	 * cycle — before the per-resource collect loop — so a freshly-configured
+	 * instance populates on its first collect. The platform de-duplicates
+	 * already-known resources by their identifying identifiers, so
+	 * re-enumerating every cycle is safe and cheap.
+	 *
+	 * <p>This replaces the build-4 hand-rolled {@code needsRediscovery()}/{@code
+	 * rediscover()} pair with the framework opt-in (§22): identical behaviour,
+	 * less code, single enumeration body shared with the {@code onDiscover()}
+	 * path via the framework default {@code getDiscoverer()}.
+	 */
 	@Override
-	protected VcfCfDiscoverer<UniFiConfig> getDiscoverer() {
-		// Wired to the SAME shared enumeration as the collector's rediscover()
-		// path (enumerateResources). Kept for forward compatibility and for any
-		// platform that DOES invoke onDiscover() — on VCF Ops 9.0.2 the server's
-		// "Auto Discover" task does NOT reach onDiscover() for this adapter3-type
-		// collector, so discovery is driven from the collect path instead (see
-		// getCollector().needsRediscovery / rediscover and the class-level
-		// "9.0.2 onDiscover() never fires" note). Discovering from both paths is
-		// safe: resources are keyed by identifying identifiers and de-duplicated
-		// by the platform.
-		return (cfg, http, param, dr) -> {
-			logInfo("UniFiAdapter discover (onDiscover path): starting "
-					+ "resource enumeration");
-			Snapshot s = currentSnapshot();
-			enumerateResources(s, dr::addResource);
-		};
+	protected boolean discoverOnCollect() {
+		return true;
 	}
 
 	/**
 	 * The single, shared resource-tree enumeration. Walks the per-cycle UniFi
 	 * snapshot and emits one {@link ResourceConfig} per resource to {@code sink}.
 	 *
-	 * <p><b>Two callers, one body.</b> {@link #getDiscoverer()} feeds each config
-	 * to {@code DiscoveryResult.addResource} (the {@code onDiscover()} path);
-	 * the collector's {@link VcfCfCollector#rediscover} feeds each config to
-	 * {@link #registerNewResource(ResourceConfig)} (the collect-path discovery
-	 * that VCF Ops 9.0.2 actually exercises). Holding the enumeration in one
-	 * method guarantees the two paths can never drift — the cardinal requirement
-	 * of the dual-path discovery fix.
+	 * <p><b>One body, two framework callers.</b> The framework default
+	 * {@code getDiscoverer()} feeds each config to {@code DiscoveryResult.addResource}
+	 * (the {@code onDiscover()} path); collect-path discovery (gated by
+	 * {@link #discoverOnCollect()}) feeds each config to
+	 * {@link #registerNewResource(ResourceConfig)} (the path VCF Ops 9.0.2
+	 * actually exercises). Holding the enumeration in one method guarantees the
+	 * two paths can never drift.
 	 *
-	 * @param s    the current-cycle snapshot of the UniFi API
+	 * <p>The snapshot is pulled internally via {@link #currentSnapshot()} (the
+	 * same per-cycle snapshot the collect loop uses — no extra UniFi API calls).
+	 * A snapshot/REST failure propagates so the framework treats it as a
+	 * non-fatal rediscovery failure (WARN, keep existing resource set) rather
+	 * than silently registering zero resources.
+	 *
 	 * @param sink consumes each enumerated {@link ResourceConfig}
 	 */
-	private void enumerateResources(Snapshot s, ResourceSink sink) {
+	@Override
+	protected void enumerateResources(ResourceSink sink)
+			throws InterruptedException, Exception {
+		Snapshot s = currentSnapshot();
 		sink.accept(rcOf("UniFiWorld", "UniFi World", "world_id", "unifi_world"));
 
 		int sites = 0, gateways = 0, switches = 0, ports = 0, aps = 0,
@@ -370,16 +399,6 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 				+ nvrs + " nvr, " + cameras + " cameras");
 	}
 
-	/**
-	 * Sink for {@link #enumerateResources}: the seam that lets one enumeration
-	 * body feed both the {@code onDiscover()} {@code DiscoveryResult} and the
-	 * collect-path {@code registerNewResource}.
-	 */
-	@FunctionalInterface
-	private interface ResourceSink {
-		void accept(ResourceConfig rc);
-	}
-
 	private ResourceConfig rcOf(String kind, String name, String idKey, String idValue) {
 		ResourceKey key = new ResourceKey(name, kind, ADAPTER_KIND);
 		key.addIdentifier(new ResourceIdentifierConfig(idKey, idValue, true));
@@ -393,52 +412,11 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 	@Override
 	protected VcfCfCollector<UniFiConfig> getCollector() {
 		return new VcfCfCollector<UniFiConfig>() {
-			/**
-			 * Drive discovery from the collect path every cycle.
-			 *
-			 * <p><b>Why (VCF Ops 9.0.2 root cause).</b> On 9.0.2 the server's
-			 * "Auto Discover" task never reaches {@code onDiscover()} for this
-			 * adapter3-type collector — {@code getDiscoverer()}'s enumeration
-			 * never runs, so a UniFi instance heartbeats GREEN but discovers
-			 * zero resources indefinitely (the build-3 symptom). The platform
-			 * DOES invoke {@code onCollect()} on the scheduled cadence, and the
-			 * framework runs {@link VcfCfCollector#rediscover} at the top of
-			 * every cycle when this returns true. Returning true unconditionally
-			 * makes discovery self-sufficient: it no longer depends on the
-			 * platform ever calling {@code onDiscover()}. This mirrors the
-			 * proven compliance-adapter pattern of owning discovery on the
-			 * collect path.
-			 *
-			 * <p>Cheap by construction: {@link #rediscover} reuses the per-cycle
-			 * {@link Snapshot} (no extra UniFi API calls beyond the one snapshot
-			 * the collect cycle already needs), and the platform de-duplicates
-			 * already-known resources by their identifying identifiers.
-			 */
-			@Override
-			public boolean needsRediscovery(UniFiConfig cfg) {
-				return true;
-			}
-
-			/**
-			 * Collect-path discovery. Runs the SAME shared enumeration as
-			 * {@link #getDiscoverer()} ({@link #enumerateResources}), registering
-			 * each resource via {@link #registerNewResource(ResourceConfig)} so
-			 * new resources ride this cycle's embedded DiscoveryResult and appear
-			 * in VCF Ops from the cycle they are first seen. Because the framework
-			 * runs this before the per-resource collect loop on the FIRST cycle
-			 * after configure, a freshly-configured (0-resource) instance is
-			 * populated on its first collect — no wait for an onDiscover() that
-			 * 9.0.2 never sends.
-			 */
-			@Override
-			public void rediscover(UniFiConfig cfg, ManagedHttpClient http,
-					ResourceConfig adapterInst, AdapterBase adapter)
-					throws InterruptedException, Exception {
-				logInfo("UniFiAdapter rediscover (collect-path discovery): "
-						+ "starting resource enumeration");
-				Snapshot s = currentSnapshot();
-				enumerateResources(s, UniFiAdapter.this::registerNewResource);
-			}
+			// Discovery is framework-plumbed via discoverOnCollect()=true over
+			// enumerateResources(ResourceSink) (§22) — no needsRediscovery()/
+			// rediscover() overrides here. The framework calls
+			// enumerateResources(this::registerNewResource) at the top of every
+			// cycle before this collect loop runs.
 
 			@Override
 			public void collect(UniFiConfig cfg, ManagedHttpClient http,

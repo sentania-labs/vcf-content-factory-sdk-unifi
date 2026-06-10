@@ -32,7 +32,18 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * UniFi Controller adapter — framework v2 (build 3).
+ * UniFi Controller adapter — framework v2 (build 4).
+ *
+ * <p><b>Build 4 — collect-path discovery (VCF Ops 9.0.2 onDiscover() gap).</b>
+ * On 9.0.2 the server's "Auto Discover" task never reaches {@code onDiscover()}
+ * for this adapter3-type collector, so build 3 heartbeat GREEN but discovered
+ * zero resources. The collector now overrides {@code needsRediscovery()=true}
+ * and runs the shared {@link #enumerateResources} on the collect path via
+ * {@code rediscover()} → {@link #registerNewResource(ResourceConfig)}. The
+ * platform runs that before the per-resource collect loop on the first cycle
+ * after configure, so a freshly-configured instance populates on its first
+ * collect. {@code getDiscoverer()} stays wired to the same shared enumeration
+ * for forward compatibility and platforms that do call {@code onDiscover()}.
  *
  * <p><b>v1 → v2 SPI port.</b> Re-homed from aria-ops-core
  * ({@code UnlicensedAdapter} + {@code com.vmware.tvs.*}) onto {@link VcfCfAdapter}
@@ -236,100 +247,137 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 
 	@Override
 	protected VcfCfDiscoverer<UniFiConfig> getDiscoverer() {
+		// Wired to the SAME shared enumeration as the collector's rediscover()
+		// path (enumerateResources). Kept for forward compatibility and for any
+		// platform that DOES invoke onDiscover() — on VCF Ops 9.0.2 the server's
+		// "Auto Discover" task does NOT reach onDiscover() for this adapter3-type
+		// collector, so discovery is driven from the collect path instead (see
+		// getCollector().needsRediscovery / rediscover and the class-level
+		// "9.0.2 onDiscover() never fires" note). Discovering from both paths is
+		// safe: resources are keyed by identifying identifiers and de-duplicated
+		// by the platform.
 		return (cfg, http, param, dr) -> {
-			logInfo("UniFiAdapter discover: starting resource enumeration");
+			logInfo("UniFiAdapter discover (onDiscover path): starting "
+					+ "resource enumeration");
 			Snapshot s = currentSnapshot();
-
-			dr.addResource(rcOf("UniFiWorld", "UniFi World",
-					"world_id", "unifi_world"));
-
-			int sites = 0, gateways = 0, switches = 0, ports = 0, aps = 0,
-					radios = 0, wans = 0, aggregates = 0, cameras = 0, nvrs = 0;
-
-			for (SimpleJson site : s.sites.get("data").asList()) {
-				String siteName = site.get("name").asString();
-				String siteDesc = site.get("desc").asString(siteName);
-				dr.addResource(rcOf("UniFiSite", siteDesc, "site_name", siteName));
-				sites++;
-
-				for (SimpleJson dev : s.devicesForSite(siteName).get("data").asList()) {
-					String type = dev.get("type").asString("");
-					String mac = dev.get("mac").asString();
-					String name = deviceDisplayName(dev);
-
-					if (isGateway(type)) {
-						dr.addResource(rcOf("UniFiGateway", name, "mac", mac));
-						gateways++;
-						if (!dev.get("wan1").isNull()) {
-							dr.addResource(rcOf("UniFiWanInterface", "WAN 1",
-									"wan_name", mac + "_wan1"));
-							wans++;
-						}
-						if (!dev.get("wan2").isNull()) {
-							dr.addResource(rcOf("UniFiWanInterface", "WAN 2",
-									"wan_name", mac + "_wan2"));
-							wans++;
-						}
-					} else if ("usw".equals(type)) {
-						dr.addResource(rcOf("UniFiSwitch", name, "mac", mac));
-						switches++;
-						SimpleJson portTable = dev.get("port_table");
-						if (!portTable.isNull()) {
-							for (SimpleJson port : portTable.asList()) {
-								int idx = (int) port.get("port_idx").asLong();
-								dr.addResource(rcOf("UniFiSwitchPort",
-										portDisplayName(port, idx),
-										"port_key", mac + "_" + idx));
-								ports++;
-							}
-						}
-					} else if ("uap".equals(type)) {
-						dr.addResource(rcOf("UniFiAccessPoint", name, "mac", mac));
-						aps++;
-						SimpleJson radioStats = dev.get("radio_table_stats");
-						if (!radioStats.isNull()) {
-							for (SimpleJson radio : radioStats.asList()) {
-								String radioCode = radio.get("radio").asString("");
-								dr.addResource(rcOf("UniFiRadio",
-										radioDisplayName(radioCode),
-										"radio_key", mac + "_" + radioCode));
-								radios++;
-							}
-						}
-					}
-				}
-
-				dr.addResource(rcOf("UniFiWirelessAggregate", "Wireless Summary",
-						"aggregate_id", siteName + "_wlan_aggregate"));
-				aggregates++;
-			}
-
-			// Protect: NVR + cameras (optional sub-tree).
-			if (s.protect != null) {
-				SimpleJson nvr = s.protect.get("nvr");
-				if (!nvr.isNull()) {
-					dr.addResource(rcOf("UniFiNvr", nvr.get("name").asString("NVR"),
-							"nvr_mac", nvr.get("mac").asString("")));
-					nvrs++;
-					SimpleJson cams = s.protect.get("cameras");
-					if (!cams.isNull()) {
-						for (SimpleJson cam : cams.asList()) {
-							String camMac = cam.get("mac").asString();
-							dr.addResource(rcOf("UniFiCamera",
-									cam.get("name").asString(camMac),
-									"camera_mac", camMac));
-							cameras++;
-						}
-					}
-				}
-			}
-
-			logInfo("UniFi discover: " + sites + " sites, " + gateways
-					+ " gateways, " + wans + " wan-ifaces, " + switches
-					+ " switches, " + ports + " ports, " + aps + " aps, "
-					+ radios + " radios, " + aggregates + " aggregates, "
-					+ nvrs + " nvr, " + cameras + " cameras");
+			enumerateResources(s, dr::addResource);
 		};
+	}
+
+	/**
+	 * The single, shared resource-tree enumeration. Walks the per-cycle UniFi
+	 * snapshot and emits one {@link ResourceConfig} per resource to {@code sink}.
+	 *
+	 * <p><b>Two callers, one body.</b> {@link #getDiscoverer()} feeds each config
+	 * to {@code DiscoveryResult.addResource} (the {@code onDiscover()} path);
+	 * the collector's {@link VcfCfCollector#rediscover} feeds each config to
+	 * {@link #registerNewResource(ResourceConfig)} (the collect-path discovery
+	 * that VCF Ops 9.0.2 actually exercises). Holding the enumeration in one
+	 * method guarantees the two paths can never drift — the cardinal requirement
+	 * of the dual-path discovery fix.
+	 *
+	 * @param s    the current-cycle snapshot of the UniFi API
+	 * @param sink consumes each enumerated {@link ResourceConfig}
+	 */
+	private void enumerateResources(Snapshot s, ResourceSink sink) {
+		sink.accept(rcOf("UniFiWorld", "UniFi World", "world_id", "unifi_world"));
+
+		int sites = 0, gateways = 0, switches = 0, ports = 0, aps = 0,
+				radios = 0, wans = 0, aggregates = 0, cameras = 0, nvrs = 0;
+
+		for (SimpleJson site : s.sites.get("data").asList()) {
+			String siteName = site.get("name").asString();
+			String siteDesc = site.get("desc").asString(siteName);
+			sink.accept(rcOf("UniFiSite", siteDesc, "site_name", siteName));
+			sites++;
+
+			for (SimpleJson dev : s.devicesForSite(siteName).get("data").asList()) {
+				String type = dev.get("type").asString("");
+				String mac = dev.get("mac").asString();
+				String name = deviceDisplayName(dev);
+
+				if (isGateway(type)) {
+					sink.accept(rcOf("UniFiGateway", name, "mac", mac));
+					gateways++;
+					if (!dev.get("wan1").isNull()) {
+						sink.accept(rcOf("UniFiWanInterface", "WAN 1",
+								"wan_name", mac + "_wan1"));
+						wans++;
+					}
+					if (!dev.get("wan2").isNull()) {
+						sink.accept(rcOf("UniFiWanInterface", "WAN 2",
+								"wan_name", mac + "_wan2"));
+						wans++;
+					}
+				} else if ("usw".equals(type)) {
+					sink.accept(rcOf("UniFiSwitch", name, "mac", mac));
+					switches++;
+					SimpleJson portTable = dev.get("port_table");
+					if (!portTable.isNull()) {
+						for (SimpleJson port : portTable.asList()) {
+							int idx = (int) port.get("port_idx").asLong();
+							sink.accept(rcOf("UniFiSwitchPort",
+									portDisplayName(port, idx),
+									"port_key", mac + "_" + idx));
+							ports++;
+						}
+					}
+				} else if ("uap".equals(type)) {
+					sink.accept(rcOf("UniFiAccessPoint", name, "mac", mac));
+					aps++;
+					SimpleJson radioStats = dev.get("radio_table_stats");
+					if (!radioStats.isNull()) {
+						for (SimpleJson radio : radioStats.asList()) {
+							String radioCode = radio.get("radio").asString("");
+							sink.accept(rcOf("UniFiRadio",
+									radioDisplayName(radioCode),
+									"radio_key", mac + "_" + radioCode));
+							radios++;
+						}
+					}
+				}
+			}
+
+			sink.accept(rcOf("UniFiWirelessAggregate", "Wireless Summary",
+					"aggregate_id", siteName + "_wlan_aggregate"));
+			aggregates++;
+		}
+
+		// Protect: NVR + cameras (optional sub-tree).
+		if (s.protect != null) {
+			SimpleJson nvr = s.protect.get("nvr");
+			if (!nvr.isNull()) {
+				sink.accept(rcOf("UniFiNvr", nvr.get("name").asString("NVR"),
+						"nvr_mac", nvr.get("mac").asString("")));
+				nvrs++;
+				SimpleJson cams = s.protect.get("cameras");
+				if (!cams.isNull()) {
+					for (SimpleJson cam : cams.asList()) {
+						String camMac = cam.get("mac").asString();
+						sink.accept(rcOf("UniFiCamera",
+								cam.get("name").asString(camMac),
+								"camera_mac", camMac));
+						cameras++;
+					}
+				}
+			}
+		}
+
+		logInfo("UniFi enumerate: " + sites + " sites, " + gateways
+				+ " gateways, " + wans + " wan-ifaces, " + switches
+				+ " switches, " + ports + " ports, " + aps + " aps, "
+				+ radios + " radios, " + aggregates + " aggregates, "
+				+ nvrs + " nvr, " + cameras + " cameras");
+	}
+
+	/**
+	 * Sink for {@link #enumerateResources}: the seam that lets one enumeration
+	 * body feed both the {@code onDiscover()} {@code DiscoveryResult} and the
+	 * collect-path {@code registerNewResource}.
+	 */
+	@FunctionalInterface
+	private interface ResourceSink {
+		void accept(ResourceConfig rc);
 	}
 
 	private ResourceConfig rcOf(String kind, String name, String idKey, String idValue) {
@@ -345,6 +393,53 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 	@Override
 	protected VcfCfCollector<UniFiConfig> getCollector() {
 		return new VcfCfCollector<UniFiConfig>() {
+			/**
+			 * Drive discovery from the collect path every cycle.
+			 *
+			 * <p><b>Why (VCF Ops 9.0.2 root cause).</b> On 9.0.2 the server's
+			 * "Auto Discover" task never reaches {@code onDiscover()} for this
+			 * adapter3-type collector — {@code getDiscoverer()}'s enumeration
+			 * never runs, so a UniFi instance heartbeats GREEN but discovers
+			 * zero resources indefinitely (the build-3 symptom). The platform
+			 * DOES invoke {@code onCollect()} on the scheduled cadence, and the
+			 * framework runs {@link VcfCfCollector#rediscover} at the top of
+			 * every cycle when this returns true. Returning true unconditionally
+			 * makes discovery self-sufficient: it no longer depends on the
+			 * platform ever calling {@code onDiscover()}. This mirrors the
+			 * proven compliance-adapter pattern of owning discovery on the
+			 * collect path.
+			 *
+			 * <p>Cheap by construction: {@link #rediscover} reuses the per-cycle
+			 * {@link Snapshot} (no extra UniFi API calls beyond the one snapshot
+			 * the collect cycle already needs), and the platform de-duplicates
+			 * already-known resources by their identifying identifiers.
+			 */
+			@Override
+			public boolean needsRediscovery(UniFiConfig cfg) {
+				return true;
+			}
+
+			/**
+			 * Collect-path discovery. Runs the SAME shared enumeration as
+			 * {@link #getDiscoverer()} ({@link #enumerateResources}), registering
+			 * each resource via {@link #registerNewResource(ResourceConfig)} so
+			 * new resources ride this cycle's embedded DiscoveryResult and appear
+			 * in VCF Ops from the cycle they are first seen. Because the framework
+			 * runs this before the per-resource collect loop on the FIRST cycle
+			 * after configure, a freshly-configured (0-resource) instance is
+			 * populated on its first collect — no wait for an onDiscover() that
+			 * 9.0.2 never sends.
+			 */
+			@Override
+			public void rediscover(UniFiConfig cfg, ManagedHttpClient http,
+					ResourceConfig adapterInst, AdapterBase adapter)
+					throws InterruptedException, Exception {
+				logInfo("UniFiAdapter rediscover (collect-path discovery): "
+						+ "starting resource enumeration");
+				Snapshot s = currentSnapshot();
+				enumerateResources(s, UniFiAdapter.this::registerNewResource);
+			}
+
 			@Override
 			public void collect(UniFiConfig cfg, ManagedHttpClient http,
 					ResourceConfig rc, List<MetricData> out, AdapterBase adapter)

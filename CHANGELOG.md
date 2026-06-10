@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.0.0.4 (2026-06-10)
+
+- fix(adapter): collect-path discovery (build 4) — VCF Ops 9.0.2 never invokes
+  `onDiscover()` for this adapter3-type collector, so build 3 heartbeat GREEN but
+  discovered zero resources. The collector now overrides `needsRediscovery()=true`
+  and runs discovery on the collect path via `rediscover()` →
+  `registerNewResource(rc)`; the framework runs that before the per-resource
+  collect loop on the first cycle after configure, so a freshly-configured
+  instance populates on its first collect. `getDiscoverer()` stays wired to the
+  same shared `enumerateResources()` body (one enumeration, two callers — no
+  drift) for forward compatibility and platforms that do call `onDiscover()`.
+  Java-only change; describe.xml, resource kinds/identifiers, and metric keys
+  unchanged (pak-compare vs build 3: 0 BLOCKING / 0 WARNING).
+
 ## 1.0.0.3 (2026-06-10)
 
 - feat(adapter): framework v2 migration (build 3) — re-home from aria-ops-core

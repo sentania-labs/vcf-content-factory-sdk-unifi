@@ -2,6 +2,10 @@
 
 Monitors UniFi infrastructure via the classic Network API and Protect API. Discovers sites, gateways, switches, access points, NVR, and cameras. Per-switch-port and per-AP-radio child objects with PoE tracking. LLDP-based stitching to ESXi hosts. Replaces the Tier 1 UniFi Network and UniFi Network Integration management packs.
 
+## Documentation
+
+Full docset (overview, installing & configuring, inventory tree): [`docs/README.md`](docs/README.md).
+
 ## Installation
 
 Upload the `.pak` file via **Administration → Solutions** in VCF Operations.

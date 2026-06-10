@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1420" height="662" style="font-family: ui-sans-serif, system-ui, sans-serif; background: #fff;">
+<defs>
+  <marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="#374151"/></marker>
+</defs>
+<path d="M 150.0,118.0 L 150.0,163.0 L 150.0,163.0 L 150.0,208.0" fill="none" stroke="#374151" stroke-width="1.5" marker-end="url(#arrow)"/>
+<path d="M 150.0,286.0 L 150.0,331.0 L 150.0,331.0 L 150.0,376.0" fill="none" stroke="#374151" stroke-width="1.5" marker-end="url(#arrow)"/>
+<path d="M 150.0,454.0 L 150.0,499.0 L 150.0,499.0 L 150.0,544.0" fill="none" stroke="#374151" stroke-width="1.5" marker-end="url(#arrow)"/>
+<path d="M 150.0,286.0 L 150.0,331.0 L 430.0,331.0 L 430.0,376.0" fill="none" stroke="#374151" stroke-width="1.5" marker-end="url(#arrow)"/>
+<path d="M 430.0,454.0 L 430.0,499.0 L 430.0,499.0 L 430.0,544.0" fill="none" stroke="#374151" stroke-width="1.5" marker-end="url(#arrow)"/>
+<path d="M 150.0,286.0 L 150.0,331.0 L 710.0,331.0 L 710.0,376.0" fill="none" stroke="#374151" stroke-width="1.5" marker-end="url(#arrow)"/>
+<path d="M 710.0,454.0 L 710.0,499.0 L 710.0,499.0 L 710.0,544.0" fill="none" stroke="#374151" stroke-width="1.5" marker-end="url(#arrow)"/>
+<path d="M 150.0,286.0 L 150.0,331.0 L 1270.0,331.0 L 1270.0,376.0" fill="none" stroke="#374151" stroke-width="1.5" marker-end="url(#arrow)"/>
+<path d="M 1270.0,454.0 L 1270.0,499.0 L 990.0,499.0 L 990.0,544.0" fill="none" stroke="#374151" stroke-width="1.5" marker-end="url(#arrow)"/>
+<path d="M 150.0,286.0 L 150.0,331.0 L 990.0,331.0 L 990.0,376.0" fill="none" stroke="#374151" stroke-width="1.5" marker-end="url(#arrow)"/>
+<rect x="40" y="40" width="220" height="78" rx="6" fill="#f8fafc" stroke="#374151" stroke-width="1.5"/>
+<text x="150" y="62" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13" font-weight="600" fill="#111827" text-anchor="middle">UniFi World</text>
+<text x="150" y="80" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" fill="#374151" text-anchor="middle">world_id *</text>
+<rect x="40" y="208" width="220" height="78" rx="6" fill="#f8fafc" stroke="#374151" stroke-width="1.5"/>
+<text x="150" y="230" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13" font-weight="600" fill="#111827" text-anchor="middle">UniFi Site</text>
+<text x="150" y="248" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" fill="#374151" text-anchor="middle">site_name *</text>
+<rect x="40" y="376" width="220" height="78" rx="6" fill="#f8fafc" stroke="#374151" stroke-width="1.5"/>
+<text x="150" y="398" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13" font-weight="600" fill="#111827" text-anchor="middle">UniFi Gateway</text>
+<text x="150" y="416" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" fill="#374151" text-anchor="middle">mac *</text>
+<rect x="40" y="544" width="220" height="78" rx="6" fill="#f8fafc" stroke="#374151" stroke-width="1.5"/>
+<text x="150" y="566" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13" font-weight="600" fill="#111827" text-anchor="middle">UniFi WAN Interface</text>
+<text x="150" y="584" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" fill="#374151" text-anchor="middle">wan_name *</text>
+<rect x="320" y="376" width="220" height="78" rx="6" fill="#f8fafc" stroke="#374151" stroke-width="1.5"/>
+<text x="430" y="398" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13" font-weight="600" fill="#111827" text-anchor="middle">UniFi Switch</text>
+<text x="430" y="416" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" fill="#374151" text-anchor="middle">mac *</text>
+<rect x="320" y="544" width="220" height="78" rx="6" fill="#f8fafc" stroke="#374151" stroke-width="1.5"/>
+<text x="430" y="566" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13" font-weight="600" fill="#111827" text-anchor="middle">UniFi Switch Port</text>
+<text x="430" y="584" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" fill="#374151" text-anchor="middle">port_key *</text>
+<rect x="600" y="376" width="220" height="78" rx="6" fill="#f8fafc" stroke="#374151" stroke-width="1.5"/>
+<text x="710" y="398" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13" font-weight="600" fill="#111827" text-anchor="middle">UniFi Access Point</text>
+<text x="710" y="416" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" fill="#374151" text-anchor="middle">mac *</text>
+<rect x="600" y="544" width="220" height="78" rx="6" fill="#f8fafc" stroke="#374151" stroke-width="1.5"/>
+<text x="710" y="566" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13" font-weight="600" fill="#111827" text-anchor="middle">UniFi Radio</text>
+<text x="710" y="584" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" fill="#374151" text-anchor="middle">radio_key *</text>
+<rect x="880" y="376" width="220" height="78" rx="6" fill="#f8fafc" stroke="#374151" stroke-width="1.5"/>
+<text x="990" y="398" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13" font-weight="600" fill="#111827" text-anchor="middle">UniFi Wireless Summary</text>
+<text x="990" y="416" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" fill="#374151" text-anchor="middle">aggregate_id *</text>
+<rect x="1160" y="376" width="220" height="78" rx="6" fill="#f8fafc" stroke="#374151" stroke-width="1.5"/>
+<text x="1270" y="398" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13" font-weight="600" fill="#111827" text-anchor="middle">UniFi NVR</text>
+<text x="1270" y="416" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" fill="#374151" text-anchor="middle">nvr_mac *</text>
+<rect x="880" y="544" width="220" height="78" rx="6" fill="#f8fafc" stroke="#374151" stroke-width="1.5"/>
+<text x="990" y="566" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13" font-weight="600" fill="#111827" text-anchor="middle">UniFi Camera</text>
+<text x="990" y="584" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" fill="#374151" text-anchor="middle">camera_mac *</text>
+</svg>

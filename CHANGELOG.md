@@ -1,5 +1,91 @@
 # Changelog
 
+## 0.0.0.8 (2026-07-02)
+
+- fix(adapter): cross-MP stitch audit against the current framework model
+  (`context/defects.md` DEF-002; `lessons/cross-mp-stitch-cp-identity-and-
+  edge-mechanics.md`). Two fixes in `UniFiStitcher.java` /
+  `UniFiAdapter.java#emitLldpHostCrossLink`; everything else already
+  conformed:
+  1. **Real `isPartOfUniqueness` propagation (the fix).**
+     `SuiteApiHostBridge.listResources()` hardcoded `isUnique="true"` for
+     every VMWARE `HostSystem` identifier returned by the Suite API,
+     instead of reading the identifier's real
+     `identifierType.isPartOfUniqueness` flag. This is the exact silent
+     failure class documented in
+     `lessons/cross-mp-foreign-key-uniqueness-flags.md` (the synology
+     `.18`-`.21` reproducer): an over-marked key's effective identity
+     diverges from the registered resource's, so the platform can never
+     bind the edge — the collector log still shows `Relationship items
+     count: N>0` every cycle, and the edge silently never persists, with
+     zero error anywhere. Fixed to read
+     `id.get("identifierType").get("isPartOfUniqueness").asBoolean()` per
+     identifier and propagate it verbatim (byte-identical pattern to
+     `SynologyStitcher.SuiteApiDatastoreBridge`), defaulting to `false` on
+     absent/null — never over-mark.
+  2. **Multi-candidate LLDP neighbour (the search-values concern).**
+     `emitLldpHostCrossLink` matched only `lldp_table.get(0)` per switch
+     port. A port's `lldp_table` can carry more than one neighbour entry
+     (inline media converter, shared segment); taking only the first is
+     the same first-match shortcut class as the synology single-NIC
+     bug (build 25 finding). Fixed to try every `lldp_table` entry on the
+     port against real VMWARE `HostSystem` inventory and take the first
+     REAL match, not the first entry.
+  - **Confirmed already conforming — no change:** the write verb
+    (`rb.parentForeign(host, portKey)` → framework `RelationshipBuilder`
+    additive `addRelationships`, never full-set `setRelationships` onto
+    the foreign HostSystem — this closes the DEF-002 clobber-risk concern
+    structurally, independent of any 9.1 `setRelationships`-scoping
+    proof); the ambient identity path (`SuiteApiStitcher.create(this,
+    …)`, no adapter-side credential handling — ambient identity v3
+    injected-instance-first now rides in via the rebuilt
+    `adapter_framework/` jar with zero adapter source change); the
+    degrade-not-crash posture (`stitcher == null` skip, cross-link
+    failure caught and WARN-logged, never costs the cycle its internal
+    topology); resolving `HostSystem` by the search value `VMEntityName`
+    then rebuilding the key from the resolved resource's own identifier
+    set (never a bare MOID, never inventing an identifier).
+  - **Inherited (framework, no adapter action — rides in via the rebuilt
+    `adapter_framework/` jar bundled by `build-sdk`):** ambient identity
+    v3 (injected per-instance credential first, then
+    `automationuser.properties`, then `maintenanceuser.properties`), the
+    additive `parentForeign` write path in `RelationshipBuilder`, and the
+    BC-mirror loopback Suite API transport
+    (`VcfCfAdapter.applyBcMirrorTransport`). Ships in sdk-buildkit-v1.0.5.
+  - This is a devel/dev-preview build — no `v*` release tag. Per RULE-014
+    (`rules/pak-version-lines.md`) the hand build is expected to stamp
+    `0.0.0.8`. Closes the unifi half of DEF-002's static-review basis
+    (the full-set-onto-foreign-parent concern); DEF-002 itself remains
+    open pending its stated closing criterion — a live devel collect
+    against an LLDP-reachable ESXi host showing the matched HostSystem
+    retains its pre-existing VMWARE children and gains the
+    `UniFiSwitchPort` child.
+
+## 0.0.0.7 (2026-06-25)
+
+- fix(framework): dev preview build with the CORRECTED hand-build version
+  convention. Hand/dev builds now use major.minor.patch = `0.0.0` (pak
+  version `0.0.0.x`) so they always sort below any real CI/release line
+  and never trigger upgrade-refusal. The prior `99.x` convention was
+  erroneous: a `99.0.0.x` hand-build makes a future real `1.0.0.x`
+  release look like a downgrade, and VCF Ops refuses the install. No
+  UniFi adapter source change. Still bundles the localization-fixed
+  `vcfcf-adapter-base.jar` (carries the `onDescribe()` /
+  `AdapterDescribe.make(String)` fix); bundled `lib/vcfcf-adapter-base.jar`
+  sha256 `4eabad523a30ed547b5aa8987b26d1517dc9d7c89c87a6217ac642ebb3734c53`.
+
+## 99.0.0.6 (2026-06-25)
+
+- fix(framework): dev preview build against the rebuilt
+  `vcfcf-adapter-base.jar` carrying the `onDescribe()` localization fix
+  (`AdapterDescribe.make(String)` swap). Every SDK pak bundles this base
+  jar, so it must be rebuilt to carry the fix; bundled
+  `lib/vcfcf-adapter-base.jar` sha256
+  `4eabad523a30ed547b5aa8987b26d1517dc9d7c89c87a6217ac642ebb3734c53`.
+  No UniFi adapter source change. Version major set to `99` to visually
+  mark this as a hand-built local dev preview, distinct from the CI/release
+  `1.0.0.x` line.
+
 ## 1.0.0.5 (2026-06-10)
 
 - fix(framework): pick up the fixed `vcfcf-adapter-base.jar` (build 5) — this jar

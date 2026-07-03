@@ -107,8 +107,25 @@ public final class UniFiStitcher {
 								.asString(null);
 						String idVal = id.get("value").asString(null);
 						if (idName == null) continue;
+						// Propagate the REAL isPartOfUniqueness flag from the
+						// Suite API response — never hardcode "true" for every
+						// identifier. A HostSystem's uniqueness-bearing
+						// identifier is its (VMEntityObjectID, VMEntityVCID)
+						// pair; VMEntityName (the LLDP-derivable search value
+						// used by matchHostByName) and any other descriptive
+						// identifier are NOT uniqueness-bearing. Over-marking
+						// them corrupts the resolved key's effective identity
+						// so the platform can never bind it, and the failure
+						// is silent — the edge is emitted every cycle but
+						// never persists, with zero error anywhere
+						// (lessons/cross-mp-foreign-key-uniqueness-flags.md,
+						// the synology .18-.21 reproducer of this exact bug).
+						// Absent/null defaults to false — never over-mark.
+						boolean isUnique = id.get("identifierType")
+								.get("isPartOfUniqueness").asBoolean();
 						identifiers.add(new String[]{idName,
-								idVal == null ? "" : idVal, "true"});
+								idVal == null ? "" : idVal,
+								isUnique ? "true" : "false"});
 					}
 				}
 				out.add(new ForeignResourceResolver.ResourceEntry(

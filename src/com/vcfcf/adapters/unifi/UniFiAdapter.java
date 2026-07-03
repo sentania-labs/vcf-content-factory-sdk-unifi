@@ -1048,9 +1048,22 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 					for (SimpleJson port : ports.asList()) {
 						SimpleJson lldpTable = port.get("lldp_table");
 						if (lldpTable.isNull() || lldpTable.size() == 0) continue;
-						String sysName = lldpTable.get(0)
-								.get("lldp_system_name").asString("");
-						ResourceKey host = st.matchHostByName(sysName);
+						// Try EVERY LLDP neighbour on this port, not just the
+						// first — a port can carry more than one lldp_table
+						// entry (e.g. an inline media converter or a shared
+						// segment), and the ESXi host is not guaranteed to be
+						// index 0. Same shortcut-is-a-bug class as the
+						// synology single-NIC lookup (build 25 finding,
+						// lessons/cross-mp-stitch-cp-identity-and-edge-
+						// mechanics.md "search values" section) — take the
+						// first REAL match, not the first entry.
+						ResourceKey host = null;
+						for (SimpleJson lldp : lldpTable.asList()) {
+							String sysName = lldp.get("lldp_system_name")
+									.asString("");
+							host = st.matchHostByName(sysName);
+							if (host != null) break;
+						}
 						if (host == null) continue;
 						int idx = (int) port.get("port_idx").asLong();
 						ResourceKey portKey = rb.resource("UniFiSwitchPort",

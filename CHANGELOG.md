@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.1.0.11 (2026-07-06)
+
+- release: cut the `1.1.0` CI/release line (minor bump over the released
+  `1.0.0` line, per `rules/pak-version-lines.md` RULE-014 — `adapter.yaml`
+  `version` is what the tag-triggered CI `--release` build stamps; local
+  `build-sdk` dev-preview builds are unaffected and continue stamping
+  `0.0.0.x`). Rationale for a minor rather than patch bump: the cross-MP
+  vmnic→port stitch was redesigned across builds 9-11 — the dead
+  controller-side LLDP read was replaced with a vCenter-side vmnic→port
+  join (build 9), a hardware-label alias closed a missed-edge gap in the
+  own-inventory index (build 10), and conflicted-property honesty was
+  added to the stitch write path (build 11). This release line packages
+  all three builds; see the `0.0.0.9` / `0.0.0.10` / `0.0.0.11` entries
+  below for the full detail on each.
+- Unblocked by the RULE-012 defect-gate: DEF-007 (platform cache-orphaning
+  issue, not an adapter defect) closed today with PROD Cloud Proxy
+  evidence — a 16-edge vmnic→port stitch sustained through a Cloud Proxy
+  collector path in production.
+
 ## 0.0.0.11 (2026-07-06)
 
 - fix(adapter): conflicted-port property honesty in the vmnic→port stitch

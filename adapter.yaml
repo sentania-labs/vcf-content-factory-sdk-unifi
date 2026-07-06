@@ -10,4 +10,4 @@ entry_class: com.vcfcf.adapters.unifi.UniFiAdapter
 name: VCF Content Factory UniFi Controller
 released: true
 tier: 2
-version: 0.0.0
+version: 1.1.0

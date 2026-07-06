@@ -79,6 +79,18 @@ never failed over the optional cross-link. Zero or ambiguous
 are counted in a one-line INFO summary each cycle; per-pair misses are
 logged at debug only, never WARN spam.
 
+> **Build 11 — conflicted-port property honesty.** If two *different*
+> hosts both claim the same UniFi switch port as an LLDP neighbour in
+> the same collect cycle (contradictory data — e.g. a mis-cabled link or
+> stale LLDP state on one side), the `LLDP|lldp_system_name` /
+> `LLDP|lldp_port_id` properties are written for **neither** claimant that
+> cycle rather than silently keeping whichever claim happened to be
+> processed last. The conflict is counted in the per-cycle summary line
+> and logged at debug with both claimant host names. The relationship
+> edge is unaffected — every matched neighbour still produces a
+> `HostSystem → UniFiSwitchPort` foreign edge, including conflicted ones;
+> this is a property-write honesty fix only.
+
 > **Note:** relationship-edge persistence depends on the bundled framework
 > jar. Build 5 picks up the framework `ResourceKey` arg-order fix, so the
 > UniFi infrastructure-tree edges and the vmnic→port stitch persist

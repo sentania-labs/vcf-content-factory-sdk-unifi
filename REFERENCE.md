@@ -209,7 +209,13 @@ Generated from `describe.xml` and `resources.properties` for build 1.0.0.4.
 > (`net:vmnic<N>|discoveryProtocol|lldp|*` on the matched VMWARE HostSystem) —
 > the same join that emits the `HostSystem → UniFiSwitchPort` foreign
 > relationship edge. `lldp_chassis_id` had no honest source under either
-> design and is removed.
+> design and is removed. Build 11: if two *different* hosts both claim the
+> same switch port as an LLDP neighbour in the same collect cycle
+> (contradictory data), the property is written for neither claimant —
+> the portKey is marked conflicted for the rest of that cycle and the
+> conflict is counted in the adapter's per-cycle stitch summary log line.
+> The `HostSystem → UniFiSwitchPort` relationship edge is unaffected and
+> is still emitted for every match, including conflicted ones.
 
 | Key | Label | Type | Unit | Monitored |
 |---|---|---|---|---|

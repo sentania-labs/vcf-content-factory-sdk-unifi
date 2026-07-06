@@ -737,8 +737,9 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		// join computed once per snapshot refresh (Snapshot.build ->
 		// computeVmnicStitch), the same join emitVmnicHostStitch uses to build
 		// the HostSystem foreign-parent edge. Absent from the map (no matched
-		// vmnic for this port) → no LLDP properties this cycle, not a
-		// sentinel.
+		// vmnic for this port this cycle, OR a build-11 conflicted portKey —
+		// two different hosts both claimed it this cycle) → no LLDP
+		// properties this cycle, not a sentinel.
 		String[] matched = s.vmnicLldpByPortKey.get(portKey);
 		if (matched != null) {
 			prop(out, "LLDP|lldp_system_name", matched[0]);
@@ -1070,7 +1071,7 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 			logInfo("vmnic→port stitch: " + edges + " edges (" + s.vmnicHostCount
 					+ " hosts, " + s.vmnicNeighbourCount + " vmnics w/ LLDP, "
 					+ s.vmnicAmbiguousCount + " ambiguous, " + s.vmnicUnmatchedCount
-					+ " unmatched)");
+					+ " unmatched, " + s.vmnicConflictedCount + " conflicted)");
 		} catch (Exception e) {
 			logWarn("vmnic→port stitch failed (internal topology unaffected): "
 					+ e.getMessage());
@@ -1186,13 +1187,17 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		// shared between emitVmnicHostStitch (relationship edges) and
 		// collectSwitchPort (LLDP|* property repurpose). Empty/zero when the
 		// stitcher is unavailable or the fetch/match failed this cycle —
-		// never a fabricated edge or property.
+		// never a fabricated edge or property. Build 11: a portKey with
+		// contradictory claims from two different hosts in the same cycle is
+		// absent here (no LLDP|* property written) even though it still has
+		// an edge in vmnicEdges for each claimant — see computeVmnicStitch.
 		final List<VmnicEdge> vmnicEdges = new ArrayList<>();
 		final Map<String, String[]> vmnicLldpByPortKey = new HashMap<>();
 		int vmnicHostCount;
 		int vmnicNeighbourCount;
 		int vmnicAmbiguousCount;
 		int vmnicUnmatchedCount;
+		int vmnicConflictedCount;
 
 		static Snapshot build(UniFiApiClient api, UniFiAdapter adapter)
 				throws Exception {
@@ -1336,6 +1341,29 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 	 * unavailable). Any exception — Call A/B failure or anything else — is
 	 * caught here and logged WARN: this join is optional and must never fail
 	 * the Snapshot build it is part of.
+	 *
+	 * <p><b>Build 11 — conflicted-port property honesty.</b> Edge emission
+	 * (the {@code host key, portKey} pair pushed onto {@code s.vmnicEdges})
+	 * is unconditional per match, exactly as build 9/10 left it — every
+	 * matched neighbour still yields a {@code parentForeign} candidate, so
+	 * the exactly-one/zero/ambiguous relationship discipline is byte-
+	 * identical to before this build. The {@code LLDP|*} *property* path is
+	 * different: {@code s.vmnicLldpByPortKey} tracks, per {@code portKey},
+	 * which host resource name is the current claimant this cycle. A second
+	 * claim on an already-claimed portKey from a <em>different</em> host is
+	 * contradictory LLDP data (two hosts both reporting the same switch
+	 * port as a neighbour) — build 9/10 silently let the later claim win
+	 * (last-write-wins), which is a cosmetically-plausible but potentially
+	 * wrong property. Build 11 instead marks the portKey <em>conflicted</em>
+	 * for the rest of this cycle: the earlier claim's property is removed,
+	 * no property is written for either claimant, both claimant host names
+	 * are logged at debug, and the portKey is counted in
+	 * {@code s.vmnicConflictedCount}. Once a portKey is marked conflicted
+	 * this cycle it stays conflicted — a third claim (from either original
+	 * claimant or a new host) cannot resurrect the property. A second claim
+	 * from the <em>same</em> host (e.g. two port aliases folding to the same
+	 * joint key, or identical values) is not a conflict and remains
+	 * idempotent: the property write stays in place.
 	 */
 	private static void computeVmnicStitch(Snapshot s, UniFiAdapter adapter) {
 		UniFiStitcher st = adapter.stitcher;
@@ -1344,6 +1372,13 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 			Map<String, List<OwnPort>> ownIndex = buildOwnPortIndex(s);
 			List<UniFiStitcher.ForeignHost> hosts = st.listHostsWithVmnicLldp();
 			s.vmnicHostCount = hosts.size();
+
+			// Per-cycle claimant tracking for the LLDP|* property (build 11).
+			// Local to this call — a fresh Snapshot/cycle starts with no
+			// claims and no conflicts. Edge emission (s.vmnicEdges) does not
+			// consult these; it stays unconditional per match.
+			Map<String, String> claimantHostByPortKey = new HashMap<>();
+			Set<String> conflictedPortKeysThisCycle = new LinkedHashSet<>();
 
 			for (UniFiStitcher.ForeignHost host : hosts) {
 				for (UniFiStitcher.VmnicNeighbour n : host.vmnics) {
@@ -1375,13 +1410,54 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 					}
 
 					OwnPort match = candidates.get(0);
+					// Edge emission is unconditional — untouched by the
+					// build-11 property-conflict logic below.
 					s.vmnicEdges.add(new VmnicEdge(host.key, match.portKey, match.portName));
-					// LLDP|* repurpose (design §7.3): the matched ESXi
-					// host's own resource name + the vmnic label it was
-					// seen on — strictly better data than the controller's
-					// never-populated lldp_table ever had for these fields.
-					s.vmnicLldpByPortKey.put(match.portKey,
-							new String[]{host.key.getResourceName(), n.vmnic});
+
+					String hostName = host.key.getResourceName();
+					if (conflictedPortKeysThisCycle.contains(match.portKey)) {
+						// Already conflicted earlier this cycle — a further
+						// claim (from either original claimant or a third
+						// host) must not resurrect the suppressed property.
+						st.debug("vmnic stitch: further claim for already-"
+								+ "conflicted port " + match.portKey + " from "
+								+ hostName + " (LLDP|* stays suppressed)");
+						continue;
+					}
+
+					String existingHost = claimantHostByPortKey.get(match.portKey);
+					if (existingHost == null) {
+						// First claim on this portKey this cycle.
+						claimantHostByPortKey.put(match.portKey, hostName);
+						// LLDP|* repurpose (design §7.3): the matched ESXi
+						// host's own resource name + the vmnic label it was
+						// seen on — strictly better data than the
+						// controller's never-populated lldp_table ever had
+						// for these fields.
+						s.vmnicLldpByPortKey.put(match.portKey,
+								new String[]{hostName, n.vmnic});
+					} else if (existingHost.equals(hostName)) {
+						// Same-host re-claim (e.g. two port aliases folding
+						// to the same joint key, or identical values) — not
+						// a conflict, stays idempotent.
+						s.vmnicLldpByPortKey.put(match.portKey,
+								new String[]{hostName, n.vmnic});
+					} else {
+						// A DIFFERENT host now claims a portKey already
+						// claimed this cycle — contradictory LLDP data.
+						// Neither claim is trustworthy: suppress the
+						// property entirely (remove the earlier claim too),
+						// mark the portKey conflicted so a later third claim
+						// can't resurrect it, and count/log it. Edge
+						// emission above is unaffected.
+						conflictedPortKeysThisCycle.add(match.portKey);
+						s.vmnicLldpByPortKey.remove(match.portKey);
+						s.vmnicConflictedCount++;
+						st.debug("vmnic stitch: conflicting LLDP claims for port "
+								+ match.portKey + " -- " + existingHost + " and "
+								+ hostName + "; suppressing LLDP|* property this "
+								+ "cycle (edges still emitted for both hosts)");
+					}
 				}
 			}
 		} catch (Exception e) {

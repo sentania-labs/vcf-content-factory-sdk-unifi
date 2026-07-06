@@ -19,6 +19,6 @@
 ## Quick Reference
 
 - **Adapter kind:** `unifi_controller`
-- **Version:** 0.0.0.10
+- **Version:** 0.0.0.11
 - **Traversal spec:** UniFi Controller Infrastructure
 - **Resource kinds:** 11

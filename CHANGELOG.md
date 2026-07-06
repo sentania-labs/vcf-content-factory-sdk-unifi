@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.0.0.11 (2026-07-06)
+
+- fix(adapter): conflicted-port property honesty in the vmnic→port stitch
+  (`designs/managementpacks/unifi-switchport-host-stitch-v2.md`, build-11
+  amendment; supersedes the uninstalled build 10). `computeVmnicStitch`
+  tracked `vmnicLldpByPortKey` last-write-wins: if two different hosts
+  both claimed the same UniFi switch port as an LLDP neighbour in one
+  cycle (contradictory data), whichever match happened to be processed
+  last silently won the `LLDP|lldp_system_name` / `LLDP|lldp_port_id`
+  property write. Build 11 tracks the claimant host per portKey for the
+  cycle; a second claim from a **different** host marks the portKey
+  conflicted — the earlier claim's property is removed, no property is
+  written for either claimant, both claimant host names are logged at
+  debug, and the conflict is counted in a new `<N> conflicted` field on
+  the per-cycle INFO summary line. A later third claim on an
+  already-conflicted portKey cannot resurrect the property. Same-host
+  re-claims (two port aliases folding to the same joint key, or
+  identical values) remain idempotent and keep the property write.
+  Relationship-edge emission (`HostSystem → UniFiSwitchPort`
+  `parentForeign`) is untouched — every match still yields an edge,
+  conflicted or not; this is a property-write honesty fix only.
+
 ## 0.0.0.10 (2026-07-06)
 
 - fix(adapter): hardware-label alias in the vmnic→port own-inventory index

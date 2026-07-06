@@ -1,6 +1,6 @@
 # Inventory Tree — VCF Content Factory UniFi Controller
 
-> Generated from `describe.xml` v0.0.0.9. Do not edit — regenerated on every build.
+> Generated from `describe.xml` v0.0.0.10. Do not edit — regenerated on every build.
 
 **Traversal Spec:** UniFi Controller Infrastructure
 

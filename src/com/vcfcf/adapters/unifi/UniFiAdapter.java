@@ -28,8 +28,10 @@ import java.io.IOException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * UniFi Controller adapter — framework v2 (build 5).
@@ -1390,10 +1392,22 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 
 	/**
 	 * Build the own-inventory join index: {@code normSwitch(dev.name) + " " +
-	 * normPort(portDisplayName)} → every local UniFiSwitchPort candidate
-	 * sharing that joint key (design §3). Almost always one candidate; more
-	 * than one is a genuine (switch, port) collision, surfaced as "ambiguous"
-	 * by the caller rather than resolved here.
+	 * normPort(alias)} → every local UniFiSwitchPort candidate sharing that
+	 * joint key (design §3, build 10 amendment). Each port is registered
+	 * under <b>two</b> aliases against the same joint key: {@code
+	 * normPort(portDisplayName)} (the operator-visible custom label) and
+	 * {@code normPort("Port " + port_idx)} (the hardware label). Build 9
+	 * indexed the display name only and missed a renamed port (LLDP
+	 * advertises the switch's hardware label, not a custom display name —
+	 * see design §"Build 10 amendment"); the hardware-label alias covers
+	 * today's firmware, the display-name alias future-proofs a firmware
+	 * change that starts advertising the custom label instead. When the two
+	 * aliases coincide (the common unrenamed case) they collapse to the same
+	 * joint key; a per-key portKey presence check keeps that from
+	 * double-registering the same candidate (which would otherwise look like
+	 * a spurious ambiguous collision). Almost always exactly one candidate
+	 * per joint key; more than one is a genuine (switch, port) collision,
+	 * surfaced as "ambiguous" by the caller rather than resolved here.
 	 */
 	private static Map<String, List<OwnPort>> buildOwnPortIndex(Snapshot s) {
 		Map<String, List<OwnPort>> idx = new HashMap<>();
@@ -1409,9 +1423,25 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 					int idx2 = (int) port.get("port_idx").asLong();
 					String portKey = switchMac + "_" + idx2;
 					String portName = portDisplayName(port, idx2);
-					String joinKey = normSwitch(devName) + " " + normPort(portName);
-					idx.computeIfAbsent(joinKey, k -> new ArrayList<>())
-							.add(new OwnPort(portKey, portName));
+					OwnPort candidate = new OwnPort(portKey, portName);
+					// Dedup via a Set: same joint key from both aliases when
+					// display name == hardware label must not double-count
+					// into a spurious ambiguity.
+					Set<String> aliases = new LinkedHashSet<>();
+					aliases.add(portName);
+					aliases.add("Port " + idx2);
+					for (String alias : aliases) {
+						String joinKey = normSwitch(devName) + " " + normPort(alias);
+						List<OwnPort> list = idx.computeIfAbsent(joinKey, k -> new ArrayList<>());
+						boolean alreadyPresent = false;
+						for (OwnPort existing : list) {
+							if (existing.portKey.equals(portKey)) {
+								alreadyPresent = true;
+								break;
+							}
+						}
+						if (!alreadyPresent) list.add(candidate);
+					}
 				}
 			}
 		}

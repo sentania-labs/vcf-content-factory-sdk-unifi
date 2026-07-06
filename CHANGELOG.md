@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.0.0.10 (2026-07-06)
+
+- fix(adapter): hardware-label alias in the vmnic→port own-inventory index
+  (`designs/managementpacks/unifi-switchport-host-stitch-v2.md`, build-10
+  amendment). Build 9 missed 1 of 16 DEVEL edges — `usw-lite-16-nuc` port 15
+  is renamed `Router` in the controller, but the switch's LLDP daemon
+  advertises the hardware label (`Port 15`), not the custom display name,
+  so the display-name-only index found no candidate for the joint key
+  vCenter published. `buildOwnPortIndex` now registers each port under
+  both `normPort(portDisplayName)` and `normPort("Port " + port_idx)`
+  against the same `(switch, port)` joint key, with a per-key portKey
+  presence check so the common case (display name == hardware label)
+  doesn't double-register into a spurious ambiguous collision. Matching
+  discipline unchanged: exactly-one candidate → edge, zero/2+ → debug-only
+  skip, never a fabricated edge.
+
 ## 0.0.0.9 (2026-07-05)
 
 - fix(adapter): replace the dead controller-side LLDP cross-link with a

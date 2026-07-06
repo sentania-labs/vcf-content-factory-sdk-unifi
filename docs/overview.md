@@ -118,10 +118,15 @@ logged at debug only, never WARN spam.
 - **CDP-only hosts are out of scope.** The join anchors on the literal
   `|discoveryProtocol|lldp|` property path; CDP-advertised neighbours use a
   different key shape and are not matched.
-- **Renamed UniFi ports are unverified.** The join matches on the UniFi
-  port's *display* name (`portDisplayName`); whether a switch advertises a
-  custom (renamed) port name or the underlying hardware label in its LLDP
-  port-description TLV is unconfirmed on 10.2.105. Worst case a renamed
-  port's edge doesn't form — no fabrication either way.
+- **Renamed UniFi ports are handled via a two-alias join (build 10).**
+  DEVEL evidence showed the switch's LLDP daemon advertises the
+  *hardware label* (`Port <idx>`), not a custom display name, so build 9's
+  display-name-only index missed a renamed port. The own-inventory index
+  now registers each port under both `portDisplayName` and `"Port " +
+  port_idx` against the same joint key, covering today's firmware
+  (hardware label) and a possible future firmware that advertises the
+  custom label instead. An alias collision (e.g. a port renamed "Port 3"
+  colliding with a real Port 3) degrades to the existing ambiguous-skip —
+  never a fabricated edge.
 - **Protect objects (NVR / camera)** require the UniFi Protect API to be
   present and reachable on the controller.

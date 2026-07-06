@@ -71,14 +71,25 @@ import java.util.Map;
  * {@link SessionCookieAuth} session model carries over functionally. The typed
  * {@link UniFiConfig} POJO and describe.xml are unchanged.
  *
- * <p><b>LLDP → ESXi HostSystem cross-link (preserved).</b> v1 stitched each switch
- * port to the VMWARE {@code HostSystem} named by the port's LLDP neighbour. v2
- * rewires that through the ambient {@link SuiteApiStitcher} + {@link UniFiStitcher}
- * with v1's exact optional semantics: ambient mode, resolve by {@code VMEntityName}
- * against real inventory, and WARN-and-skip when the Suite API is unavailable. The
- * edge is emitted as {@code parentForeign(host, switchPort)} — the host is the
- * foreign parent of the (local) UniFi switch port, matching v1's
- * {@code portRes.addParent(hostRes)}.
+ * <p><b>vCenter-side vmnic→port stitch (build 9 — replaces the dead
+ * controller-side LLDP read).</b> Builds ≤8 tried to stitch each switch port to
+ * a VMWARE {@code HostSystem} named by the port's own LLDP neighbour
+ * ({@code port_table[].lldp_table[].lldp_system_name}), read off the UniFi
+ * controller. On Network App 10.2.105 that table is empty for every port — the
+ * controller never re-publishes the switch's own LLDP daemon's neighbours over
+ * any API surface (classic / v2 / Integration); see
+ * {@code context/investigations/unifi-lldp-switchport-esxi-2026-07-05.md}. Build
+ * 9 inverts the join: it enumerates VMWARE {@code HostSystem} resources over the
+ * ambient {@link SuiteApiStitcher} and reads each host's per-vmnic LLDP
+ * properties (published by vCenter/ESXi — {@code net:vmnic<N>|discoveryProtocol|
+ * lldp|systemName} / {@code ...|portName}), then matches the joint
+ * {@code (switchName, portName)} pair back into the adapter's own UniFiSwitch /
+ * UniFiSwitchPort inventory (see {@link UniFiStitcher} and
+ * {@link #emitVmnicHostStitch}). Same optional semantics as before: WARN-and-
+ * skip when the Suite API is unavailable, and a match/fetch failure never costs
+ * the cycle its internal topology. The edge is still emitted as
+ * {@code parentForeign(host, switchPort)} — the host is the foreign parent of
+ * the (local) UniFi switch port.
  *
  * <p><b>Per-resource collect reshape (snapshot cache).</b> v1 collected the whole
  * topology in one pass; v2 calls {@code collect(rc)} once per discovered resource.
@@ -103,10 +114,10 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 	private volatile UniFiApiClient api;
 
 	/**
-	 * Ambient Suite API transport for the optional LLDP→HostSystem cross-link, and
-	 * the UniFi-specific resolver over it. Both null when the Suite API is
+	 * Ambient Suite API transport for the optional vmnic→port stitch, and the
+	 * UniFi-specific resolver over it. Both null when the Suite API is
 	 * unavailable (remote collector with no {@code maintenanceuser.properties}) —
-	 * the cross-link is then skipped for the cycle and collection proceeds.
+	 * the stitch is then skipped for the cycle and collection proceeds.
 	 */
 	private volatile SuiteApiStitcher suiteStitcher;
 	private volatile UniFiStitcher stitcher;
@@ -149,14 +160,12 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 				componentLogger(UniFiApiClient.class));
 		this.snapshot = null;
 
-		// Optional LLDP→HostSystem cross-link transport. Ambient mode — no
-		// describe.xml credential fields, matching v1's zero-config stitch.
-		// create() reads maintenanceuser.properties and targets the local
-		// Suite API; on a remote collector that file is absent and create()
-		// throws. v1's stitchLldpToHosts was itself gated on Suite API
-		// availability, so we degrade exactly as v1 did: WARN once, leave the
-		// stitcher null, and let the cycle complete with all UniFi resources
-		// collecting normally and only the cross-link skipped.
+		// Optional vmnic→port stitch transport. Ambient mode — no describe.xml
+		// credential fields. create() reads maintenanceuser.properties and
+		// targets the local Suite API; on a remote collector that file is
+		// absent and create() throws. Degrade exactly as build ≤8 did: WARN
+		// once, leave the stitcher null, and let the cycle complete with all
+		// UniFi resources collecting normally and only the stitch skipped.
 		try {
 			this.suiteStitcher = SuiteApiStitcher.create(this,
 					componentLogger(SuiteApiStitcher.class));
@@ -165,14 +174,14 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		} catch (RuntimeException e) {
 			this.suiteStitcher = null;
 			this.stitcher = null;
-			logWarn("LLDP→HostSystem cross-link skipped — Suite API unavailable "
+			logWarn("vmnic→port stitch skipped — Suite API unavailable "
 					+ "(remote collector without maintenanceuser.properties?): "
 					+ e.getMessage());
 		}
 
 		logInfo("UniFiAdapter configured: host=" + cfg.host + " port=" + cfg.port
 				+ " allowInsecure=" + cfg.allowInsecure
-				+ " lldpCrossLink=" + (stitcher != null));
+				+ " vmnicHostStitch=" + (stitcher != null));
 	}
 
 	private UniFiConfig buildConfig(ResourceConfig rc) {
@@ -719,12 +728,19 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 			prop(out, "PoE|poe_mode", port.get("poe_mode").asString(""));
 		}
 
-		SimpleJson lldpTable = port.get("lldp_table");
-		if (!lldpTable.isNull() && lldpTable.size() > 0) {
-			SimpleJson lldp = lldpTable.get(0);
-			prop(out, "LLDP|lldp_system_name", lldp.get("lldp_system_name").asString(""));
-			prop(out, "LLDP|lldp_port_id", lldp.get("lldp_port_id").asString(""));
-			prop(out, "LLDP|lldp_chassis_id", lldp.get("lldp_chassis_id").asString(""));
+		// LLDP|* (build 9 — repurposed): the controller's own port_table[].
+		// lldp_table is empty on Network App 10.2.105 (investigation
+		// context/investigations/unifi-lldp-switchport-esxi-2026-07-05.md), so
+		// these properties are now populated from the vCenter-side vmnic→port
+		// join computed once per snapshot refresh (Snapshot.build ->
+		// computeVmnicStitch), the same join emitVmnicHostStitch uses to build
+		// the HostSystem foreign-parent edge. Absent from the map (no matched
+		// vmnic for this port) → no LLDP properties this cycle, not a
+		// sentinel.
+		String[] matched = s.vmnicLldpByPortKey.get(portKey);
+		if (matched != null) {
+			prop(out, "LLDP|lldp_system_name", matched[0]);
+			prop(out, "LLDP|lldp_port_id", matched[1]);
 		}
 	}
 
@@ -1014,70 +1030,48 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 			}
 		}
 
-		// LLDP → ESXi HostSystem cross-link (optional; v1 parity).
-		emitLldpHostCrossLink(rb, s);
+		// vCenter-side vmnic→port stitch (build 9; optional — replaces the
+		// dead controller-side LLDP read).
+		emitVmnicHostStitch(rb, s);
 
 		logInfo("Relationships built: World>Site>{Gateway>WAN, Switch>Port, "
 				+ "AP>Radio, WirelessAggregate, NVR>Camera} tree"
-				+ (stitcher != null ? " + LLDP→HostSystem cross-link" : ""));
+				+ (stitcher != null ? " + vmnic→port stitch" : ""));
 		return rb.build();
 	}
 
 	/**
-	 * Emit v1's informational {@code HostSystem → UniFiSwitchPort} cross-link: for
-	 * each switch port whose first LLDP neighbour ({@code lldp_system_name}) names a
-	 * real VMWARE {@code HostSystem}, make the port a foreign child of that host.
+	 * Emit the build-9 {@code HostSystem → UniFiSwitchPort} foreign edge: for
+	 * every vmnic→port match {@link Snapshot#build} already computed this
+	 * cycle ({@link Snapshot#vmnicEdges}, via {@link UniFiStitcher
+	 * #listHostsWithVmnicLldp()} joined against the adapter's own inventory —
+	 * see {@code computeVmnicStitch}), make the matched UniFiSwitchPort a
+	 * foreign child of the matching VMWARE {@code HostSystem}.
 	 *
-	 * <p>No-op when {@code stitcher == null} (Suite API unavailable). Any failure is
-	 * caught and logged WARN — the internal topology already built must still be
-	 * returned, so a cross-link fault never costs the cycle its relationships.
+	 * <p>No-op when {@code stitcher == null} (Suite API unavailable). Matching
+	 * itself already happened in {@code Snapshot.build()} (crash-safe there
+	 * too); this method only walks the precomputed edge list and logs the
+	 * one-line per-cycle summary. Any failure here is still caught and logged
+	 * WARN — the internal topology already built must always be returned, so
+	 * a stitch fault never costs the cycle its relationships.
 	 */
-	private void emitLldpHostCrossLink(RelationshipBuilder rb, Snapshot s) {
-		UniFiStitcher st = this.stitcher;
-		if (st == null) return;
+	private void emitVmnicHostStitch(RelationshipBuilder rb, Snapshot s) {
+		if (this.stitcher == null) return;
 		try {
-			st.invalidateCache();
-			int matches = 0;
-			for (SimpleJson site : s.sites.get("data").asList()) {
-				String siteName = site.get("name").asString();
-				for (SimpleJson dev : s.devicesForSite(siteName).get("data").asList()) {
-					if (!"usw".equals(dev.get("type").asString(""))) continue;
-					String switchMac = dev.get("mac").asString();
-					SimpleJson ports = dev.get("port_table");
-					if (ports.isNull()) continue;
-					for (SimpleJson port : ports.asList()) {
-						SimpleJson lldpTable = port.get("lldp_table");
-						if (lldpTable.isNull() || lldpTable.size() == 0) continue;
-						// Try EVERY LLDP neighbour on this port, not just the
-						// first — a port can carry more than one lldp_table
-						// entry (e.g. an inline media converter or a shared
-						// segment), and the ESXi host is not guaranteed to be
-						// index 0. Same shortcut-is-a-bug class as the
-						// synology single-NIC lookup (build 25 finding,
-						// lessons/cross-mp-stitch-cp-identity-and-edge-
-						// mechanics.md "search values" section) — take the
-						// first REAL match, not the first entry.
-						ResourceKey host = null;
-						for (SimpleJson lldp : lldpTable.asList()) {
-							String sysName = lldp.get("lldp_system_name")
-									.asString("");
-							host = st.matchHostByName(sysName);
-							if (host != null) break;
-						}
-						if (host == null) continue;
-						int idx = (int) port.get("port_idx").asLong();
-						ResourceKey portKey = rb.resource("UniFiSwitchPort",
-								portDisplayName(port, idx),
-								"port_key", switchMac + "_" + idx);
-						rb.parentForeign(host, portKey);
-						matches++;
-					}
-				}
+			int edges = 0;
+			for (VmnicEdge e : s.vmnicEdges) {
+				ResourceKey portRk = rb.resource("UniFiSwitchPort", e.portName,
+						"port_key", e.portKey);
+				rb.parentForeign(e.hostKey, portRk);
+				edges++;
 			}
-			logInfo("LLDP→HostSystem cross-link: " + matches + " port→host edges");
+			logInfo("vmnic→port stitch: " + edges + " edges (" + s.vmnicHostCount
+					+ " hosts, " + s.vmnicNeighbourCount + " vmnics w/ LLDP, "
+					+ s.vmnicAmbiguousCount + " ambiguous, " + s.vmnicUnmatchedCount
+					+ " unmatched)");
 		} catch (Exception e) {
-			logWarn("LLDP→HostSystem cross-link failed (internal topology "
-					+ "unaffected): " + e.getMessage());
+			logWarn("vmnic→port stitch failed (internal topology unaffected): "
+					+ e.getMessage());
 		}
 	}
 
@@ -1186,6 +1180,18 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		final Map<String, SimpleJson> deviceByMac = new HashMap<>();
 		final Map<String, SimpleJson> cameraByMac = new HashMap<>();
 
+		// vmnic→port stitch (build 9) — computed once per snapshot refresh,
+		// shared between emitVmnicHostStitch (relationship edges) and
+		// collectSwitchPort (LLDP|* property repurpose). Empty/zero when the
+		// stitcher is unavailable or the fetch/match failed this cycle —
+		// never a fabricated edge or property.
+		final List<VmnicEdge> vmnicEdges = new ArrayList<>();
+		final Map<String, String[]> vmnicLldpByPortKey = new HashMap<>();
+		int vmnicHostCount;
+		int vmnicNeighbourCount;
+		int vmnicAmbiguousCount;
+		int vmnicUnmatchedCount;
+
 		static Snapshot build(UniFiApiClient api, UniFiAdapter adapter)
 				throws Exception {
 			Snapshot s = new Snapshot();
@@ -1225,6 +1231,18 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 							+ siteName + ": " + e.getMessage());
 				}
 			}
+
+			// vmnic→port stitch (build 9; optional, crash-safe). Fetches the
+			// VMWARE HostSystem enumeration + per-vmnic LLDP properties once
+			// per snapshot refresh and joins against the own-inventory index
+			// just built above, so the result is ready for both
+			// emitVmnicHostStitch (relationship edges) and collectSwitchPort
+			// (LLDP|* property repurpose) without a second Suite API round
+			// trip. A fetch/match failure is caught inside
+			// computeVmnicStitch — it must never fail this Snapshot build,
+			// since the internal UniFi topology this method exists to
+			// produce does not depend on the optional cross-adapter join.
+			computeVmnicStitch(s, adapter);
 
 			// Protect (optional sub-tree).
 			try {
@@ -1272,5 +1290,154 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		SimpleJson findCamera(String mac) {
 			return cameraByMac.get(mac);
 		}
+	}
+
+	// -----------------------------------------------------------------------
+	// vmnic→port stitch (build 9) — join computation
+	// -----------------------------------------------------------------------
+
+	/**
+	 * One matched vmnic→port edge: {@code hostKey} (the VMWARE {@code
+	 * HostSystem}, honest uniqueness flags from the Suite API) becomes the
+	 * foreign parent of the local UniFiSwitchPort identified by {@code
+	 * portKey} / {@code portName}.
+	 */
+	private static final class VmnicEdge {
+		final ResourceKey hostKey;
+		final String portKey;
+		final String portName;
+
+		VmnicEdge(ResourceKey hostKey, String portKey, String portName) {
+			this.hostKey = hostKey;
+			this.portKey = portKey;
+			this.portName = portName;
+		}
+	}
+
+	/** One of the adapter's own UniFiSwitchPort candidates for a
+	 * (switch, port) join key — see {@link #buildOwnPortIndex}. */
+	private static final class OwnPort {
+		final String portKey;
+		final String portName;
+
+		OwnPort(String portKey, String portName) {
+			this.portKey = portKey;
+			this.portName = portName;
+		}
+	}
+
+	/**
+	 * Fetch the VMWARE HostSystem vmnic LLDP enumeration and join it against
+	 * the adapter's own UniFiSwitch / UniFiSwitchPort inventory (design §3),
+	 * populating {@code s.vmnicEdges}, {@code s.vmnicLldpByPortKey}, and the
+	 * summary counters. No-op when {@code adapter.stitcher == null} (Suite API
+	 * unavailable). Any exception — Call A/B failure or anything else — is
+	 * caught here and logged WARN: this join is optional and must never fail
+	 * the Snapshot build it is part of.
+	 */
+	private static void computeVmnicStitch(Snapshot s, UniFiAdapter adapter) {
+		UniFiStitcher st = adapter.stitcher;
+		if (st == null) return;
+		try {
+			Map<String, List<OwnPort>> ownIndex = buildOwnPortIndex(s);
+			List<UniFiStitcher.ForeignHost> hosts = st.listHostsWithVmnicLldp();
+			s.vmnicHostCount = hosts.size();
+
+			for (UniFiStitcher.ForeignHost host : hosts) {
+				for (UniFiStitcher.VmnicNeighbour n : host.vmnics) {
+					s.vmnicNeighbourCount++;
+					String joinKey = normSwitch(n.systemName) + " " + normPort(n.portName);
+					List<OwnPort> candidates = ownIndex.get(joinKey);
+
+					if (candidates == null || candidates.isEmpty()) {
+						s.vmnicUnmatchedCount++;
+						st.debug("vmnic stitch: no port match for "
+								+ host.key.getResourceName() + " " + n.vmnic
+								+ " -> switch=" + n.systemName
+								+ " port=" + n.portName);
+						continue;
+					}
+					if (candidates.size() > 1) {
+						// Genuine (switch, port) collision — the joint key
+						// disambiguates a duplicate switch dev.name in every
+						// other case, so this is the honest, rare tie the
+						// API gives us nothing to break. Skip, never emit to
+						// every candidate (that would fabricate a wrong
+						// edge).
+						s.vmnicAmbiguousCount++;
+						st.debug("vmnic stitch: ambiguous (" + candidates.size()
+								+ " candidates) for " + host.key.getResourceName()
+								+ " " + n.vmnic + " -> switch=" + n.systemName
+								+ " port=" + n.portName);
+						continue;
+					}
+
+					OwnPort match = candidates.get(0);
+					s.vmnicEdges.add(new VmnicEdge(host.key, match.portKey, match.portName));
+					// LLDP|* repurpose (design §7.3): the matched ESXi
+					// host's own resource name + the vmnic label it was
+					// seen on — strictly better data than the controller's
+					// never-populated lldp_table ever had for these fields.
+					s.vmnicLldpByPortKey.put(match.portKey,
+							new String[]{host.key.getResourceName(), n.vmnic});
+				}
+			}
+		} catch (Exception e) {
+			adapter.logWarn("vmnic→port stitch: fetch/match failed (internal "
+					+ "topology unaffected): " + e.getMessage());
+		}
+	}
+
+	/**
+	 * Build the own-inventory join index: {@code normSwitch(dev.name) + " " +
+	 * normPort(portDisplayName)} → every local UniFiSwitchPort candidate
+	 * sharing that joint key (design §3). Almost always one candidate; more
+	 * than one is a genuine (switch, port) collision, surfaced as "ambiguous"
+	 * by the caller rather than resolved here.
+	 */
+	private static Map<String, List<OwnPort>> buildOwnPortIndex(Snapshot s) {
+		Map<String, List<OwnPort>> idx = new HashMap<>();
+		for (SimpleJson site : s.sites.get("data").asList()) {
+			String siteName = site.get("name").asString();
+			for (SimpleJson dev : s.devicesForSite(siteName).get("data").asList()) {
+				if (!"usw".equals(dev.get("type").asString(""))) continue;
+				String switchMac = dev.get("mac").asString();
+				String devName = dev.get("name").asString("");
+				SimpleJson ports = dev.get("port_table");
+				if (ports.isNull()) continue;
+				for (SimpleJson port : ports.asList()) {
+					int idx2 = (int) port.get("port_idx").asLong();
+					String portKey = switchMac + "_" + idx2;
+					String portName = portDisplayName(port, idx2);
+					String joinKey = normSwitch(devName) + " " + normPort(portName);
+					idx.computeIfAbsent(joinKey, k -> new ArrayList<>())
+							.add(new OwnPort(portKey, portName));
+				}
+			}
+		}
+		return idx;
+	}
+
+	/**
+	 * Normalize a UniFi switch-port display name for the vmnic join (design
+	 * §3): lowercase, {@code _} → space (the XG SFP-port quirk: vCenter
+	 * renders {@code "SFP_ 1"} where UniFi displays {@code "SFP 1"}), collapse
+	 * runs of whitespace to one space, trim. Deliberately narrow — must not
+	 * merge {@code "Port 1"} and {@code "Port 11"}.
+	 */
+	private static String normPort(String s) {
+		if (s == null) return "";
+		String t = s.toLowerCase().replace('_', ' ');
+		return t.replaceAll("\\s+", " ").trim();
+	}
+
+	/**
+	 * Normalize a UniFi switch device name for the vmnic join (design §3):
+	 * lowercase, collapse whitespace, trim. No underscore fold — switch names
+	 * don't carry the SFP-port quirk {@link #normPort} works around.
+	 */
+	private static String normSwitch(String s) {
+		if (s == null) return "";
+		return s.toLowerCase().replaceAll("\\s+", " ").trim();
 	}
 }

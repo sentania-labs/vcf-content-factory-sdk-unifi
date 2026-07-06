@@ -43,25 +43,47 @@ utilization and client counts, and the Protect NVR / camera state.
 
 ## Cross-Adapter Behavior
 
-The pack ships an **optional, informational LLDP cross-link to ESXi
-hosts**. A UniFi switch port that learns an ESXi host's uplink via LLDP is
-attached to the corresponding **VMWARE HostSystem**, so the network edge
-that a physical NIC plugs into is visible from the host. Resolution is by
-`VMEntityName` against the real VMWARE inventory (`parentForeign(host,
-port)`).
+The pack ships an **optional, informational vmnic→port stitch to ESXi
+hosts** (build 9; replaces the build ≤8 controller-side LLDP cross-link,
+which never worked — see below). Each VMWARE `HostSystem` publishes, per
+physical NIC, the UniFi switch device name and switch-port name its LLDP
+neighbour advertises (`net:vmnic<N>|discoveryProtocol|lldp|systemName` /
+`...|portName`). The adapter enumerates HostSystems over the Suite API,
+reads those per-vmnic properties, and matches the `(switch, port)` pair
+back into its own UniFi switch/port inventory — a per-vmnic-accurate join,
+not just per-host. A matched host becomes the foreign parent of the
+corresponding **UniFiSwitchPort** (`parentForeign(host, port)`), and the
+same join repurposes the port's `LLDP|lldp_system_name` /
+`LLDP|lldp_port_id` properties to show the connected ESXi host and vmnic
+directly on the port resource.
 
-The cross-link is **ambient and optional**: it resolves foreign VMWARE
-HostSystem resources over the local VCF Operations Suite API using the
-collector's ambient credentials. When the Suite API is unavailable, the
-cross-link is skipped with a WARN and all UniFi resources collect normally
-— collection is never failed over the optional cross-link. The cross-link
-legitimately matches nothing when no LLDP neighbor is an ESXi host.
+> **Why the direction inverted in build 9.** Builds ≤8 tried to read the
+> neighbour off the UniFi controller itself
+> (`port_table[].lldp_table[].lldp_system_name`). On Network App 10.2.105
+> that table is empty for every port — the controller's REST API never
+> re-publishes the switch's own LLDP daemon's neighbours, on any surface
+> (classic, v2, or Integration), even though the switch CLI (`show lldp
+> neighbor`) proves the daemon sees the ESXi hosts. See
+> `context/investigations/unifi-lldp-switchport-esxi-2026-07-05.md` for the
+> full endpoint-by-endpoint finding. Build 9 reads the same neighbour data
+> from the other end of the link — vCenter, which does publish it — instead
+> of the UniFi controller, which does not.
+
+The stitch is **ambient and optional**: it resolves foreign VMWARE
+HostSystem resources and reads their properties over the local VCF
+Operations Suite API using the collector's ambient credentials. When the
+Suite API is unavailable, or a fetch/match fails, the stitch is skipped
+(WARN once) and all UniFi resources collect normally — collection is
+never failed over the optional cross-link. Zero or ambiguous
+`(switch, port)` matches are legitimate (no fabricated edges, ever) and
+are counted in a one-line INFO summary each cycle; per-pair misses are
+logged at debug only, never WARN spam.
 
 > **Note:** relationship-edge persistence depends on the bundled framework
 > jar. Build 5 picks up the framework `ResourceKey` arg-order fix, so the
-> UniFi infrastructure-tree edges and the LLDP cross-link persist correctly
-> (prior v2 builds emitted edges that the platform silently dropped at
-> persist time).
+> UniFi infrastructure-tree edges and the vmnic→port stitch persist
+> correctly (prior v2 builds emitted edges that the platform silently
+> dropped at persist time).
 
 ## Notable Behaviors
 
@@ -88,9 +110,18 @@ legitimately matches nothing when no LLDP neighbor is an ESXi host.
 ## Known Limitations
 
 - **No remediation / control actions.** The pack is read-only monitoring.
-- **LLDP cross-link requires the Suite API** and an ESXi host on the other
-  end of the link. On a collector without ambient Suite API access, or
-  where no switch-port LLDP neighbor is an ESXi host, the cross-link is
-  omitted (UniFi collection is unaffected).
+- **vmnic→port stitch requires the Suite API** and an ESXi host advertising
+  LLDP to vCenter on the other end of the link. On a collector without
+  ambient Suite API access, or where a host has no `net:vmnic*|
+  discoveryProtocol|lldp|*` properties (LLDP off/CDP-only on that host), the
+  stitch is omitted for that host (UniFi collection is unaffected).
+- **CDP-only hosts are out of scope.** The join anchors on the literal
+  `|discoveryProtocol|lldp|` property path; CDP-advertised neighbours use a
+  different key shape and are not matched.
+- **Renamed UniFi ports are unverified.** The join matches on the UniFi
+  port's *display* name (`portDisplayName`); whether a switch advertises a
+  custom (renamed) port name or the underlying hardware label in its LLDP
+  port-description TLV is unconfirmed on 10.2.105. Worst case a renamed
+  port's edge doesn't form — no fabrication either way.
 - **Protect objects (NVR / camera)** require the UniFi Protect API to be
   present and reachable on the controller.

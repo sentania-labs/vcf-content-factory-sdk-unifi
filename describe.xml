@@ -213,7 +213,6 @@
 			<ResourceGroup key="LLDP" nameKey="134" instanced="false">
 				<ResourceAttribute key="lldp_system_name" nameKey="135" dataType="string" isProperty="true"/>
 				<ResourceAttribute key="lldp_port_id" nameKey="136" dataType="string" isProperty="true"/>
-				<ResourceAttribute key="lldp_chassis_id" nameKey="137" dataType="string" isProperty="true"/>
 			</ResourceGroup>
 		</ResourceKind>
 

@@ -1,8 +1,8 @@
 adapter_kind: unifi_controller
-build_number: 8
+build_number: 9
 description: 'Monitors UniFi infrastructure via the classic Network API and Protect
   API. Discovers sites, gateways, switches, access points, NVR, and cameras. Per-switch-port
-  and per-AP-radio child objects with PoE tracking. LLDP-based stitching to ESXi hosts.
+  and per-AP-radio child objects with PoE tracking. vCenter vmnic->port stitching to ESXi hosts.
   Replaces the Tier 1 UniFi Network and UniFi Network Integration management packs.
 
   '

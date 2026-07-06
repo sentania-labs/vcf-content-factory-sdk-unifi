@@ -1,5 +1,52 @@
 # Changelog
 
+## 0.0.0.9 (2026-07-05)
+
+- fix(adapter): replace the dead controller-side LLDP cross-link with a
+  vCenter-side vmnic→port join
+  (`designs/managementpacks/unifi-switchport-host-stitch-v2.md`, build-9
+  addendum; `context/investigations/unifi-lldp-switchport-esxi-2026-07-05.md`).
+  Investigation proved `port_table[].lldp_table` is empty for every port on
+  Network App 10.2.105 and no controller API surface (classic / v2 /
+  Integration) re-publishes the switch's own LLDP daemon's neighbours — the
+  build ≤8 stitch matched 0 hosts on every cycle, silently. vCenter/ESXi does
+  publish the same neighbour data per HostSystem
+  (`net:vmnic<N>|discoveryProtocol|lldp|systemName` / `...|portName`,
+  live-proven on all 8 DEVEL hosts), so build 9 inverts the join direction:
+  - **`UniFiStitcher`:** `matchHostByName` / `ForeignResourceResolver`
+    removed (dead under the inverted join — a host lookup by name never
+    happens anymore). New `listHostsWithVmnicLldp()` enumerates VMWARE
+    HostSystems (Call A, honest `isPartOfUniqueness` from the Suite API
+    response, unchanged from build 8) plus each host's per-vmnic LLDP
+    properties (Call B, `GET /api/resources/{id}/properties`) — 1+H Suite
+    API GETs per snapshot refresh, no cache (fetch fresh every refresh,
+    replacing the resolver's 5-minute TTL).
+  - **`UniFiAdapter`:** `emitLldpHostCrossLink` renamed
+    `emitVmnicHostStitch`; matching now joins the normalized
+    `(switchName, portName)` pair against the adapter's own inventory
+    (`normSwitch`/`normPort`: lowercase, `_`→space, collapse whitespace,
+    trim — folds the XG SFP-port LLDP quirk `"SFP_ 1"` to the UniFi display
+    name `"SFP 1"`). Exactly-one match → edge; zero/ambiguous → debug-only
+    skip, no fabrication (unchanged discipline from build 8). Edge
+    semantics (`parentForeign` → additive `addRelationships`, never
+    full-set onto the foreign HostSystem parent) and crash safety
+    (stitch failure never costs the cycle) are unchanged. One INFO summary
+    per cycle: `vmnic→port stitch: <E> edges (<H> hosts, <V> vmnics w/
+    LLDP, <A> ambiguous, <U> unmatched)`.
+  - **`LLDP|*` describe group repurposed, not removed.** The controller-side
+    read this group was built for never worked on 10.2.105, so shipping it
+    unchanged would leave three declared-but-never-populated properties —
+    the exact misleading-metric failure mode the framework forbids.
+    `lldp_system_name` / `lldp_port_id` are now populated from the matched
+    vmnic join (the connected ESXi host name and vmnic label — better data
+    than the controller ever had for these fields). `lldp_chassis_id` is
+    **removed** (code + `describe.xml` + `resources.properties`): vCenter's
+    LLDP properties expose no chassis id, so it can never be honestly
+    populated under either design.
+  - `adapter.yaml` description reworded "LLDP-based stitching" →
+    "vCenter vmnic->port stitching"; `docs/overview.md` rewritten to
+    describe the new join direction and cite the investigation.
+
 ## 0.0.0.8 (2026-07-02)
 
 - fix(adapter): cross-MP stitch audit against the current framework model

@@ -202,11 +202,19 @@ Generated from `describe.xml` and `resources.properties` for build 1.0.0.4.
 
 #### LLDP
 
+> Build 9: repurposed from the dead controller-side read. The controller's
+> own `port_table[].lldp_table` is empty on Network App 10.2.105 (see
+> `context/investigations/unifi-lldp-switchport-esxi-2026-07-05.md`), so these
+> two properties are now populated from the vCenter-side vmnic→port join
+> (`net:vmnic<N>|discoveryProtocol|lldp|*` on the matched VMWARE HostSystem) —
+> the same join that emits the `HostSystem → UniFiSwitchPort` foreign
+> relationship edge. `lldp_chassis_id` had no honest source under either
+> design and is removed.
+
 | Key | Label | Type | Unit | Monitored |
 |---|---|---|---|---|
 | `lldp_system_name` | LLDP System Name | property | — | — |
 | `lldp_port_id` | LLDP Port ID | property | — | — |
-| `lldp_chassis_id` | LLDP Chassis ID | property | — | — |
 
 ---
 

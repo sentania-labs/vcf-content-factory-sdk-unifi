@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.0.13 (2026-08-18)
+
+- fix: Allow Insecure SSL now ignores certificate hostname mismatches (issue #5). No adapter source change: rebuilt against sdk-buildkit v1.0.10, which fixes vcf-content-factory#82 (`insecureSslContext()` reimplemented as `X509ExtendedTrustManager` so JSSE no longer re-arms the endpoint identity check). Build 12 was pulled: it was tagged without the `build_number` bump, so its pak was stamped 1.1.0.11 and version-indistinguishable from the prior release.
+
 ## 1.1.0.11 (2026-07-06)
 
 - release: cut the `1.1.0` CI/release line (minor bump over the released

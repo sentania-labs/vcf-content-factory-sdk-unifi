@@ -42,6 +42,35 @@ final class UniFiFailures {
 	}
 
 	/**
+	 * Review NIT-2: what the first authentication-class refusal in
+	 * {@code t}'s cause chain means, for the WARN of a failed build, or
+	 * {@code null} when there is none. A 429 is rate limiting, never an
+	 * authentication refusal; a 401 or 403 on a data call (the framework has
+	 * already logged in again and replayed it once) is an authentication or
+	 * permission refusal, on the login POST it is a refused login.
+	 */
+	static String refusalKind(Throwable t) {
+		Set<Throwable> seen = Collections.newSetFromMap(new IdentityHashMap<>());
+		for (Throwable c = t; c != null && seen.add(c); c = c.getCause()) {
+			if (c instanceof UniFiHttpException) {
+				UniFiHttpException h = (UniFiHttpException) c;
+				int st = h.status();
+				if (st == 429) {
+					return h.isLogin() ? "the controller is rate limiting logins"
+							: "the controller is rate limiting requests";
+				}
+				if (st == 401 || st == 403) {
+					return h.isLogin() ? "the controller refused the login"
+							: "the controller refused a request even after a "
+									+ "fresh login (an authentication or "
+									+ "permission refusal)";
+				}
+			}
+		}
+		return null;
+	}
+
+	/**
 	 * Issue #25: whether {@code t} means the controller could not be reached,
 	 * so the resource is DOWN (the target is down) rather than ERROR
 	 * (something is wrong with the adapter or its data). True when the cause

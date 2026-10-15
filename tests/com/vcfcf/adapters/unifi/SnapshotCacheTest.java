@@ -58,6 +58,7 @@ public final class SnapshotCacheTest {
 		wrongPasswordOneLoginPerCycle();
 		authBackoffSpansCycles();
 		rateLimitAndForbiddenAreAuthClass();
+		dataCallRateLimitIsNotCalledAnAuthRefusal();
 		instanceEditTriesAtOnce();
 		unreachableFailsFastAndRetriesNextCycle();
 		failureHoldsForTheRestOfTheCycle();
@@ -177,6 +178,55 @@ public final class SnapshotCacheTest {
 		clock.now += 5 * MIN;
 		cycle(c, ctl, RESOURCES, warns);
 		T.eq(2, ctl.logins, "HTTP 500 is retried the next cycle");
+	}
+
+	/**
+	 * Review NIT-2: a 429 on a data call (after the framework's own retries)
+	 * is described as rate limiting, not as an authentication refusal, and
+	 * still holds the next build for the 15-minute back-off. A refused login
+	 * is described as one.
+	 */
+	static void dataCallRateLimitIsNotCalledAnAuthRefusal() {
+		FakeClock clock = new FakeClock();
+		SnapshotCache<String> c = cache(clock);
+		List<String> warns = new ArrayList<>();
+		int[] builds = {0};
+		SnapshotCache.Builder<String> rateLimited = () -> {
+			builds[0]++;
+			throw new UniFiHttpException("UniFi GET /proxy/network/api/self/"
+					+ "sites returned HTTP 429", 429, false);
+		};
+		c.beginCycle();
+		try {
+			c.get(rateLimited, warns::add);
+		} catch (Exception expected) {
+			// expected
+		}
+		T.eq(1, warns.size(), "one WARN");
+		T.check(warns.get(0).contains("rate limiting requests"),
+				"a data call 429 is rate limiting: " + warns.get(0));
+		T.check(!warns.get(0).contains("authentication"),
+				"and not an authentication refusal: " + warns.get(0));
+		clock.now += 5 * MIN;
+		c.beginCycle();
+		try {
+			c.get(rateLimited, warns::add);
+		} catch (Exception expected) {
+			// expected
+		}
+		T.eq(1, builds[0], "the 15-minute back-off still applies");
+
+		FakeController ctl = new FakeController();
+		ctl.loginStatus = 401;
+		List<String> loginWarns = new ArrayList<>();
+		cycle(cache(new FakeClock()), ctl, 1, loginWarns);
+		T.check(loginWarns.get(0).contains("refused the login"),
+				"a login 401 is a refused login: " + loginWarns.get(0));
+		ctl.loginStatus = 429;
+		loginWarns.clear();
+		cycle(cache(new FakeClock()), ctl, 1, loginWarns);
+		T.check(loginWarns.get(0).contains("rate limiting logins"),
+				"a login 429 is rate limiting: " + loginWarns.get(0));
 	}
 
 	/** A new configuration gets a new cache: it may log in at once. */

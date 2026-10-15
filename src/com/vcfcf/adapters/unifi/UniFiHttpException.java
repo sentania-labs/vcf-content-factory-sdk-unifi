@@ -5,8 +5,9 @@ import java.io.IOException;
 /**
  * Build 14 (issue #11): a non-200 answer from the UniFi controller, with its
  * HTTP status kept as a field so the snapshot cache can tell an
- * authentication-class refusal (401, 403, 429) from any other failure
- * without parsing message text. The message carries the redacted path and
+ * authentication refusal or rate limiting (401, 403, 429) from any other
+ * failure without parsing message text, and whether the refused call was
+ * the login POST so its WARN can say which (review NIT-2). The message carries the redacted path and
  * the status only, never a request body or a cookie.
  */
 final class UniFiHttpException extends IOException {

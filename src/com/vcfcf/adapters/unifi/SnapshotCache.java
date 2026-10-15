@@ -15,8 +15,9 @@ import java.util.function.Consumer;
  * and with it a new login: with a wrong password one cycle sent one failed
  * login per resource. Now a failed build is remembered and rethrown,
  * without contacting the controller, for the rest of the cycle it failed
- * in and until its back-off has passed. After an authentication-class
- * refusal (401, 403 or 429 anywhere in the cause chain) the back-off is
+ * in and until its back-off has passed. After an authentication refusal
+ * or rate limiting (401, 403 or 429 anywhere in the cause chain; the WARN
+ * says which, see {@link UniFiFailures#refusalKind}) the back-off is
  * {@code authBackoffMs}; after any other failure it is
  * {@code retryBackoffMs}. The first caller (usually the collect-path
  * discovery step) gets the original exception; the others get a
@@ -175,9 +176,10 @@ final class SnapshotCache<S> {
 					+ "this cycle fail from this result without contacting the "
 					+ "controller; next attempt "
 					+ nextAttempt(failedAt)
-					+ (auth != 0 ? " (HTTP " + auth + " is an authentication "
-							+ "refusal: no login is tried before then unless the "
-							+ "adapter instance settings are edited)" : "")
+					+ (auth != 0 ? " (HTTP " + auth + ": "
+							+ UniFiFailures.refusalKind(e) + "; no login is tried "
+							+ "before then unless the adapter instance settings "
+							+ "are edited)" : "")
 					+ ".");
 			throw e;
 		}

@@ -122,10 +122,12 @@ logged at debug only, never WARN spam.
   adapter log gets one `UniFi snapshot build failed` WARN from the
   adapter, plus the framework's own line for the discovery step and for
   each resource that fails from the cached result. After an
-  authentication refusal (HTTP 401, 403 or 429) no login is tried for 15
-  minutes unless the instance is edited, so a wrong or rotated password
-  costs one failed login every few cycles instead of one per resource.
-  Any other failure is tried again on the next cycle.
+  authentication refusal (HTTP 401 or 403) or rate limiting (HTTP 429) no
+  login is tried for 15 minutes unless the instance is edited, so a wrong
+  or rotated password costs one failed login every few cycles instead of
+  one per resource. The WARN says which it was and whether the login or a
+  data call was refused. Any other failure is tried again on the next
+  cycle.
 
 - **An unreachable controller is DOWN, not ERROR (build 14).** Connection
   refused, a connect or request timeout, an unknown host name or no route

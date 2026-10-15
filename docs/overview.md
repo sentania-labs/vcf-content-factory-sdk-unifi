@@ -114,6 +114,62 @@ logged at debug only, never WARN spam.
   Session cookie, login password, and `unifises` token are redacted from
   every path- and body-bearing error and log line.
 
+- **A failed snapshot is not retried per resource (build 14).** When the
+  per-cycle snapshot cannot be built (wrong password, controller down),
+  the failure is cached: the first caller of the cycle (usually the
+  discovery step) reports it, and every other resource of that cycle
+  fails from the cached result without contacting the controller. The
+  adapter log gets one `UniFi snapshot build failed` WARN from the
+  adapter, plus the framework's own line for the discovery step and for
+  each resource that fails from the cached result. Each framework line is
+  one line naming the original failure (its class and message), with no
+  stack trace, on the cycle that tried the login as on the cycles served
+  from the cache; the original with its stack is logged at DEBUG. After an
+  authentication refusal (HTTP 401 or 403) or rate limiting (HTTP 429) no
+  login is tried for 15 minutes unless the instance is edited, so a wrong
+  or rotated password costs one failed login every few cycles instead of
+  one per resource. The WARN says which it was and whether the login or a
+  data call was refused. Any other failure is tried again on the next
+  cycle. During a wrong-password back-off the adapter instance still
+  shows **Collecting** in the account list while every UniFi object is
+  ERROR: the adapter cannot change the instance status (a framework
+  limitation).
+
+- **An unreachable controller is DOWN, not ERROR (build 14).** Connection
+  refused, a connect or request timeout, an unknown host name or no route
+  to the host marks the UniFi objects DOWN (the target is down), wherever
+  the network error sits in the failure. A refused login, a certificate
+  failure or an unreadable answer is ERROR.
+
+- **One unreadable site does not take out the others (build 14).** If the
+  device list of one site cannot be read (a permission on that site, a
+  timeout, a 5xx), that site's site, device, port, radio, WAN and Wireless
+  Summary objects go to ERROR for the cycle, and every other site collects
+  normally. The adapter log gets one WARN naming the site, plus the
+  framework's own line for each resource of that site. Its existing
+  relationships are left as they are. A device that moved between that
+  site and a readable one in the meantime can briefly show the wrong site:
+  moved out of the failed site, it is under both sites; moved into it, it
+  is under neither (and ERROR, since it was not read). Both heal on the
+  first cycle the failed site is read again. The whole cycle fails only
+  when the site list itself or every site's device list cannot be read. If
+  one site's call cannot connect to the controller (connection refused,
+  connect timeout, unknown host, no route), the sites after it are not
+  asked that cycle and are ERROR too, so a controller that is down costs
+  one timeout per cycle, not one per site. A site whose request times out
+  after connecting (a slow, large site) is ERROR alone and the sites after
+  it are still read; a controller that accepts connections but answers
+  nothing therefore costs one timeout per site, and if every site times
+  out the objects are DOWN. A site whose device list is refused (HTTP
+  401 or 403, an authentication or permission refusal, or 429, rate
+  limiting) while other sites are read is not asked again for 15 minutes
+  unless the instance is edited: its objects stay ERROR, its relationships
+  are kept, and the other sites collect every cycle. The adapter log gets
+  one WARN when that cool-down starts and one INFO when it has passed and
+  the site is asked again. Any other site failure (a 5xx, a timeout) is
+  asked again on the next cycle. A refusal on every site fails the whole
+  cycle into the 15-minute back-off above, as before.
+
 - **Fresh-instance discovery works on VCF Ops 9.0.2.** The adapter
   enumerates its topology on the collect path (`discoverOnCollect()`), so a
   freshly created instance populates on its first collection cycle rather

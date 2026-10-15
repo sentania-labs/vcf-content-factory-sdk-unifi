@@ -13,6 +13,7 @@ import com.vcfcf.adapter.stitch.RelationshipBuilder;
 import com.vcfcf.adapter.stitch.SuiteApiStitcher;
 
 import com.integrien.alive.common.adapter3.AdapterBase;
+import com.integrien.alive.common.adapter3.Logger;
 import com.integrien.alive.common.adapter3.MetricData;
 import com.integrien.alive.common.adapter3.MetricKey;
 import com.integrien.alive.common.adapter3.Relationships;
@@ -28,6 +29,7 @@ import java.io.IOException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -113,7 +115,15 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 
 	private static final String ADAPTER_KIND = "unifi_controller";
 
-	private volatile UniFiApiClient api;
+	/**
+	 * Build 14 (issue #11): the API client and the snapshot cache of one
+	 * configuration, published together by one volatile write in
+	 * {@link #configureAdapter}. An instance edit publishes a new holder, so
+	 * a cached failure (and its login back-off) never outlives the settings
+	 * it failed with, and a call never pairs one configuration's client with
+	 * another's cache. Null until the first configure.
+	 */
+	private volatile Configured configured;
 
 	/**
 	 * Ambient Suite API transport for the optional vmnic→port stitch, and the
@@ -125,13 +135,59 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 	private volatile UniFiStitcher stitcher;
 
 	/**
-	 * Per-cycle snapshot of the UniFi API responses, shared across all per-resource
-	 * {@code collect()} calls within one collection cycle. {@code volatile} for
-	 * cross-thread visibility; {@link #currentSnapshot()} is {@code synchronized} so
-	 * the check-then-refresh is atomic and only one thread performs the API pull.
+	 * Per-cycle snapshot of the UniFi API responses, shared across all
+	 * per-resource {@code collect()} calls within one collection cycle, lives in
+	 * the {@link SnapshotCache} of the current {@link Configured} holder.
+	 *
+	 * <p>Build 14 (issue #12): one build per collection cycle. The cycle, not
+	 * the clock, decides reuse; this age (counted from the end of the build)
+	 * is only a safety net that rebuilds a snapshot in a cycle that has run
+	 * this long. Before build 14 the snapshot was rebuilt after 60 s counted
+	 * from the start of its build, so a build slower than 60 s was rebuilt by
+	 * every resource.
 	 */
-	private volatile Snapshot snapshot;
-	private static final long MIN_REFRESH_INTERVAL_MS = 60_000L;
+	private static final long MAX_SNAPSHOT_AGE_MS = 15L * 60_000L;
+
+	/**
+	 * Build 14 (issue #11): after a failed snapshot build that is not an
+	 * authentication refusal, no new build before this has passed (and never
+	 * in the same cycle). Shorter than the 5-minute default collection
+	 * interval, so an unreachable controller is tried once per cycle.
+	 */
+	private static final long FAILURE_RETRY_BACKOFF_MS = 60_000L;
+
+	/**
+	 * Build 14 (issue #11): after a 401, 403 or 429, no new build (and so no
+	 * login) before this has passed, unless the instance is edited. At the
+	 * default 5-minute interval that is one failed login every fourth cycle
+	 * instead of one per resource per cycle.
+	 */
+	private static final long AUTH_FAILURE_BACKOFF_MS = 15L * 60_000L;
+
+	/**
+	 * One configuration's API client, snapshot cache and the snapshot
+	 * cache's logger (immutable). The logger is resolved once in
+	 * configureAdapter and stored here: componentLogger resets the logger to
+	 * INFO on every call, so a per-failure lookup would make the cache's
+	 * DEBUG line unreachable even after an operator raised the level.
+	 * Codex P1: also the per-site stat/device cool-downs, so an instance
+	 * edit starts with none.
+	 */
+	private static final class Configured {
+		final UniFiApiClient api;
+		final Logger snapshotLog;
+		final SnapshotCache<Snapshot> snapshots;
+		final SiteReads.Cooldowns siteCooldowns;
+
+		Configured(UniFiApiClient api, Logger snapshotLog,
+				SnapshotCache<Snapshot> snapshots,
+				SiteReads.Cooldowns siteCooldowns) {
+			this.api = api;
+			this.snapshotLog = snapshotLog;
+			this.snapshots = snapshots;
+			this.siteCooldowns = siteCooldowns;
+		}
+	}
 
 	public UniFiAdapter() {
 		super(ADAPTER_KIND);
@@ -158,9 +214,18 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		UniFiConfig cfg = buildConfig(resourceConfig);
 		this.config = cfg;
 		this.httpClient = buildHttpClient(cfg);
-		this.api = new UniFiApiClient(this.httpClient,
-				componentLogger(UniFiApiClient.class));
-		this.snapshot = null;
+		// Resolved once per configure, never per failure (see Configured).
+		Logger snapshotLog = componentLogger(SnapshotCache.class);
+		this.configured = new Configured(
+				new UniFiApiClient(this.httpClient,
+						componentLogger(UniFiApiClient.class)),
+				snapshotLog,
+				new SnapshotCache<>(System::currentTimeMillis,
+						MAX_SNAPSHOT_AGE_MS, FAILURE_RETRY_BACKOFF_MS,
+						AUTH_FAILURE_BACKOFF_MS, snapshotLog::debug),
+				// Codex P1: same windows as the snapshot back-off.
+				new SiteReads.Cooldowns(System::currentTimeMillis,
+						AUTH_FAILURE_BACKOFF_MS, FAILURE_RETRY_BACKOFF_MS));
 
 		// Optional vmnic→port stitch transport. Ambient mode — no describe.xml
 		// credential fields. create() reads maintenanceuser.properties and
@@ -184,6 +249,11 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		logInfo("UniFiAdapter configured: host=" + cfg.host + " port=" + cfg.port
 				+ " allowInsecure=" + cfg.allowInsecure
 				+ " vmnicHostStitch=" + (stitcher != null));
+		// Build 14 (issue #13): one WARN per configure while insecure mode is on.
+		String insecure = cfg.insecureWarning();
+		if (insecure != null) {
+			logWarn(insecure);
+		}
 	}
 
 	private UniFiConfig buildConfig(ResourceConfig rc) {
@@ -228,8 +298,33 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 	}
 
 	// -----------------------------------------------------------------------
+	// certificateCheckUrls (framework hook; build 14, review W1, issue #33)
+	// -----------------------------------------------------------------------
+
+	/**
+	 * Build 14: the controller endpoint VCF Operations reviews on Validate
+	 * Connection, so an untrusted (for example factory self-signed)
+	 * certificate brings up the Review and Accept Certificate dialog instead
+	 * of failing Test Connection. The accepted certificate is stored on the
+	 * instance and trusted by {@code platformSsl(this)} on every cycle, with
+	 * validation still on. Derived only from the passed, possibly unsaved
+	 * config, never from instance state; empty when Allow Insecure SSL is on
+	 * (read with this pak's own {@link UniFiConfig#parseAllowInsecure}, the
+	 * parse the client uses, not the framework's trimmed one). See
+	 * {@link UniFiConfig#certificateCheckUrls}. {@code @Override} on
+	 * purpose, as compliance build 93: a buildkit older than 1.0.11 has no
+	 * such hook and must fail to compile rather than build a pak that never
+	 * offers the dialog.
+	 */
+	@Override
+	protected List<String> certificateCheckUrls(ResourceConfig rc) {
+		return UniFiConfig.certificateCheckUrls(getIdentifier(rc, "host"),
+				getIdentifier(rc, "port"), getIdentifier(rc, "allowInsecure"));
+	}
+
+	// -----------------------------------------------------------------------
 	// getTester — self-contained (controller calls it on a BARE instance:
-	// configureAdapter has NOT run, so this.api / this.config are null). Derive
+	// configureAdapter has NOT run, so this.configured / this.config are null). Derive
 	// everything from the ResourceConfig on the TestParam.
 	// -----------------------------------------------------------------------
 
@@ -294,6 +389,34 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 	@Override
 	protected boolean discoverOnCollect() {
 		return true;
+	}
+
+	/**
+	 * Build 14 (issue #11): a discovery pass is its own cycle for the
+	 * snapshot cache, so a failure cached by a collection cycle stops
+	 * blocking only by its back-off, not by a discovery call. Otherwise the
+	 * framework default: {@link #enumerateResources(ResourceSink)} into the
+	 * discovery result.
+	 */
+	@Override
+	@SuppressWarnings("rawtypes")
+	protected com.vcfcf.adapter.spi.VcfCfDiscoverer getDiscoverer() {
+		return (cfg, http, param, dr) -> {
+			beginCycle();
+			enumerateResources(dr::addResource);
+		};
+	}
+
+	/**
+	 * Build 14 (issue #11): marks the start of a collection or discovery
+	 * pass in the current configuration's snapshot cache. A no-op before
+	 * the first configure.
+	 */
+	private void beginCycle() {
+		Configured c = this.configured;
+		if (c != null) {
+			c.snapshots.beginCycle();
+		}
 	}
 
 	/**
@@ -424,10 +547,25 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 	protected VcfCfCollector<UniFiConfig> getCollector() {
 		return new VcfCfCollector<UniFiConfig>() {
 			// Discovery is framework-plumbed via discoverOnCollect()=true over
-			// enumerateResources(ResourceSink) (§22) — no needsRediscovery()/
-			// rediscover() overrides here. The framework calls
+			// enumerateResources(ResourceSink) (§22); there is no rediscover()
+			// override here. The framework calls
 			// enumerateResources(this::registerNewResource) at the top of every
 			// cycle before this collect loop runs.
+
+			/**
+			 * Build 14 (issue #11): the framework calls this exactly once at
+			 * the top of every onCollect, before discovery and the
+			 * per-resource loop, so it is the start-of-cycle hook for the
+			 * snapshot cache. Never asks for the hand-rolled rediscovery
+			 * (always false), exactly as before.
+			 */
+			@Override
+			public boolean needsRediscovery(UniFiConfig cfg) {
+				// Rides on an undocumented side effect (called once per
+				// onCollect); explicit start-of-cycle hook: vcf-content-factory#221.
+				beginCycle();
+				return false;
+			}
 
 			@Override
 			public void collect(UniFiConfig cfg, ManagedHttpClient http,
@@ -454,9 +592,18 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 				}
 			}
 
+			/**
+			 * Build 14 (issue #25): DOWN when the controller could not be
+			 * reached (connect refused, connect or request timeout, unknown
+			 * host, no route), found anywhere in the cause chain, including
+			 * through the framework's login wrapper and a cached snapshot
+			 * failure. ERROR for authentication refusals, certificate
+			 * failures, unreadable payloads and anything else. Before build
+			 * 14 only a bare ConnectException was DOWN.
+			 */
 			@Override
 			public ResourceStatusEnum mapCollectException(Exception e) {
-				if (e instanceof java.net.ConnectException) {
+				if (UniFiFailures.isUnreachable(e)) {
 					return ResourceStatusEnum.RESOURCE_STATUS_DOWN;
 				}
 				return ResourceStatusEnum.RESOURCE_STATUS_ERROR;
@@ -465,22 +612,36 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 	}
 
 	/**
-	 * Return the snapshot for this cycle, refreshing it if it is null or older than
-	 * {@link #MIN_REFRESH_INTERVAL_MS}. A refresh failure (session/REST error, or an
-	 * unreadable {@code /self/sites} payload) propagates out so the framework marks
-	 * the resource ERROR/DOWN — never a silent empty snapshot.
+	 * Return the snapshot for this cycle, building it on the cycle's first
+	 * call (or after {@link #MAX_SNAPSHOT_AGE_MS} in an endless cycle). A
+	 * refresh failure (session/REST error, or an unreadable
+	 * {@code /self/sites} payload) propagates out so the framework marks the
+	 * resource ERROR/DOWN, never a silent empty snapshot.
+	 *
+	 * <p>Build 14 (issue #11): a failed refresh is cached by the
+	 * configuration's {@link SnapshotCache}: the first caller of the cycle
+	 * (usually the collect-path discovery step) gets a one-line, stackless
+	 * copy of the failure, and the remaining resources fail from the same
+	 * kind of copy without contacting the controller (no new login), as
+	 * does every call until its back-off has passed. The cache logs one
+	 * "UniFi snapshot build failed" WARN, and the same line with the
+	 * original exception and its stack at DEBUG through the logger stored
+	 * in {@link Configured}; the framework still logs
+	 * its own line for each resource that fails.
 	 */
-	private synchronized Snapshot currentSnapshot() throws Exception {
-		Snapshot s = this.snapshot;
-		long now = System.currentTimeMillis();
-		if (s == null || (now - s.builtAt) >= MIN_REFRESH_INTERVAL_MS) {
-			s = Snapshot.build(api, this);
-			this.snapshot = s;
+	private Snapshot currentSnapshot() throws Exception {
+		Configured c = this.configured;
+		if (c == null) {
+			throw new IllegalStateException("UniFi adapter instance is not "
+					+ "configured");
 		}
-		return s;
+		return c.snapshots.get(
+				() -> Snapshot.build(c.api, c.siteCooldowns, this),
+				this::logWarn);
 	}
 
-	private void dispatchCollect(ResourceConfig rc, Snapshot s, List<MetricData> out) {
+	private void dispatchCollect(ResourceConfig rc, Snapshot s, List<MetricData> out)
+			throws IOException {
 		String kind = rc.getResourceKind();
 		if (kind == null) return;
 		switch (kind) {
@@ -538,8 +699,10 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 	// Per-kind collectors (value semantics preserved from v1)
 	// -----------------------------------------------------------------------
 
-	private void collectSite(ResourceConfig rc, Snapshot s, List<MetricData> out) {
+	private void collectSite(ResourceConfig rc, Snapshot s, List<MetricData> out)
+			throws IOException {
 		String siteName = getIdentifier(rc, "site_name");
+		s.requireSiteRead(siteName);
 		SimpleJson site = s.findSite(siteName);
 		if (site == null) {
 			logWarn("collect: site " + siteName + " absent from snapshot");
@@ -550,7 +713,8 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 				String.valueOf(site.get("device_count").asLong()));
 	}
 
-	private void collectGateway(ResourceConfig rc, Snapshot s, List<MetricData> out) {
+	private void collectGateway(ResourceConfig rc, Snapshot s, List<MetricData> out)
+			throws IOException {
 		String mac = getIdentifier(rc, "mac");
 		SimpleJson dev = s.findDevice(mac);
 		if (dev == null) {
@@ -593,7 +757,8 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		prop(out, "Configuration|name", dev.get("name").asString(""));
 	}
 
-	private void collectWanInterface(ResourceConfig rc, Snapshot s, List<MetricData> out) {
+	private void collectWanInterface(ResourceConfig rc, Snapshot s, List<MetricData> out)
+			throws IOException {
 		String key = getIdentifier(rc, "wan_name"); // "<gwMac>_wan1" | "<gwMac>_wan2"
 		int sep = key.lastIndexOf('_');
 		if (sep < 0) {
@@ -634,7 +799,8 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		}
 	}
 
-	private void collectSwitch(ResourceConfig rc, Snapshot s, List<MetricData> out) {
+	private void collectSwitch(ResourceConfig rc, Snapshot s, List<MetricData> out)
+			throws IOException {
 		String mac = getIdentifier(rc, "mac");
 		SimpleJson dev = s.findDevice(mac);
 		if (dev == null) {
@@ -682,7 +848,8 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		metric(out, "PoE|poe_budget_remaining", maxPower - poeConsumption);
 	}
 
-	private void collectSwitchPort(ResourceConfig rc, Snapshot s, List<MetricData> out) {
+	private void collectSwitchPort(ResourceConfig rc, Snapshot s, List<MetricData> out)
+			throws IOException {
 		String portKey = getIdentifier(rc, "port_key"); // "<switchMac>_<idx>"
 		int sep = portKey.lastIndexOf('_');
 		if (sep < 0) {
@@ -747,7 +914,8 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		}
 	}
 
-	private void collectAccessPoint(ResourceConfig rc, Snapshot s, List<MetricData> out) {
+	private void collectAccessPoint(ResourceConfig rc, Snapshot s, List<MetricData> out)
+			throws IOException {
 		String mac = getIdentifier(rc, "mac");
 		SimpleJson dev = s.findDevice(mac);
 		if (dev == null) {
@@ -772,7 +940,8 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		prop(out, "Configuration|name", dev.get("name").asString(""));
 	}
 
-	private void collectRadio(ResourceConfig rc, Snapshot s, List<MetricData> out) {
+	private void collectRadio(ResourceConfig rc, Snapshot s, List<MetricData> out)
+			throws IOException {
 		String radioKey = getIdentifier(rc, "radio_key"); // "<apMac>_<radioCode>"
 		int sep = radioKey.lastIndexOf('_');
 		if (sep < 0) {
@@ -829,11 +998,12 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 	}
 
 	private void collectWirelessAggregate(ResourceConfig rc, Snapshot s,
-			List<MetricData> out) {
+			List<MetricData> out) throws IOException {
 		String aggId = getIdentifier(rc, "aggregate_id"); // "<siteName>_wlan_aggregate"
 		String siteName = aggId.endsWith("_wlan_aggregate")
 				? aggId.substring(0, aggId.length() - "_wlan_aggregate".length())
 				: aggId;
+		s.requireSiteRead(siteName);
 		SimpleJson health = s.healthForSite(siteName);
 		if (health == null) {
 			logWarn("collect: wireless aggregate health for site " + siteName
@@ -943,6 +1113,13 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 					"site_name", siteName);
 			rb.parent(world, siteKey);
 
+			// Build 14 (issue #19): a site not read this cycle is never a
+			// parent here (full-set would drop its device edges); see
+			// SiteIsolation.emitsChildren.
+			if (!SiteIsolation.emitsChildren(s.failedSites, siteName)) {
+				continue;
+			}
+
 			SimpleJson devices = s.devicesForSite(siteName);
 			Map<String, ResourceKey> deviceByMac = new HashMap<>();
 
@@ -1019,7 +1196,14 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 				ResourceKey nvrKey = rb.resource("UniFiNvr",
 						nvr.get("name").asString("NVR"),
 						"nvr_mac", nvr.get("mac").asString(""));
-				rb.parent(siteKey, nvrKey);
+				// Build 14 (issue #19): not under a site that was not read
+				// (full-set would drop that site's device edges); the NVR
+				// keeps its existing site edge and its cameras below. See
+				// SiteIsolation.nvrParentSite.
+				if (java.util.Objects.equals(siteName, SiteIsolation.nvrParentSite(
+						s.siteNames(), s.failedSites))) {
+					rb.parent(siteKey, nvrKey);
+				}
 
 				SimpleJson cameras = s.protect.get("cameras");
 				if (!cameras.isNull()) {
@@ -1155,7 +1339,7 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		if (st != null) st.discard();
 		this.suiteStitcher = null;
 		this.stitcher = null;
-		this.snapshot = null;
+		this.configured = null;
 		super.onDiscard();
 	}
 
@@ -1172,12 +1356,19 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 	 * camera resources are simply absent — never a sentinel.
 	 */
 	private static final class Snapshot {
-		final long builtAt = System.currentTimeMillis();
+		// Build 14 (issue #12): no builtAt here any more. It was a field
+		// initializer, stamped before the API calls ran; SnapshotCache now
+		// stamps the time when build() returns.
 
 		SimpleJson sites;
 		final Map<String, SimpleJson> devicesBySite = new HashMap<>();
 		final Map<String, SimpleJson> healthBySite = new HashMap<>();
 		SimpleJson protect; // nullable — Protect optional
+
+		// Build 14 (issue #19): sites whose stat/device failed this cycle,
+		// site name to reason. Their resources fail (ERROR) instead of
+		// collecting nothing; the other sites collect normally.
+		final Map<String, String> failedSites = new LinkedHashMap<>();
 
 		// Derived lookups across all sites.
 		final Map<String, SimpleJson> deviceByMac = new HashMap<>();
@@ -1199,7 +1390,8 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		int vmnicUnmatchedCount;
 		int vmnicConflictedCount;
 
-		static Snapshot build(UniFiApiClient api, UniFiAdapter adapter)
+		static Snapshot build(UniFiApiClient api,
+				SiteReads.Cooldowns siteCooldowns, UniFiAdapter adapter)
 				throws Exception {
 			Snapshot s = new Snapshot();
 			s.sites = api.listSites();
@@ -1216,10 +1408,26 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 						+ "sentinel metrics published)");
 			}
 
-			int devTotal = 0;
+			// Build 14 (issue #19): one site's failed stat/device marks that
+			// site failed (one WARN) and the other sites are read; the build
+			// fails only when every site fails (or /self/sites, above).
+			// Codex P1: a site refused with 401, 403 or 429 is not asked again
+			// for 15 minutes (60 s after any other failure); it stays failed.
+			List<String> siteNames = new ArrayList<>();
 			for (SimpleJson site : siteData.asList()) {
-				String siteName = site.get("name").asString();
-				SimpleJson devices = api.statDevice(siteName);
+				siteNames.add(site.get("name").asString());
+			}
+			SiteReads.Result<SimpleJson> deviceReads = SiteReads.readAll(
+					"stat/device", siteNames, api::statDevice, adapter::logWarn,
+					siteCooldowns, adapter::logInfo);
+			s.failedSites.putAll(deviceReads.failed);
+
+			int devTotal = 0;
+			for (String siteName : siteNames) {
+				SimpleJson devices = deviceReads.bySite.get(siteName);
+				if (devices == null) {
+					continue; // failed this cycle: no devices, no health call
+				}
 				s.devicesBySite.put(siteName, devices);
 				SimpleJson devData = devices.get("data");
 				if (!devData.isNull() && devData.isList()) {
@@ -1270,8 +1478,19 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 
 			adapter.logInfo("UniFi API snapshot: " + siteData.size() + " sites / "
 					+ devTotal + " devices / " + s.cameraByMac.size() + " cameras / "
-					+ "protect=" + (s.protect != null));
+					+ "protect=" + (s.protect != null)
+					+ (s.failedSites.isEmpty() ? ""
+							: " / unreadable sites=" + s.failedSites.keySet()));
 			return s;
+		}
+
+		/** Site names in /self/sites order. */
+		List<String> siteNames() {
+			List<String> names = new ArrayList<>();
+			for (SimpleJson site : sites.get("data").asList()) {
+				names.add(site.get("name").asString());
+			}
+			return names;
 		}
 
 		SimpleJson devicesForSite(String siteName) {
@@ -1290,8 +1509,23 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 			return null;
 		}
 
-		SimpleJson findDevice(String mac) {
-			return deviceByMac.get(mac);
+		/**
+		 * The device with this MAC, or {@code null} when it is not in the
+		 * snapshot and every site was read (it is gone from the controller).
+		 * Build 14 (issue #19): throws when a site could not be read this
+		 * cycle and the device is not found; see
+		 * {@link SiteIsolation#findDevice}.
+		 */
+		SimpleJson findDevice(String mac) throws IOException {
+			return SiteIsolation.findDevice(deviceByMac, failedSites, mac);
+		}
+
+		/**
+		 * Build 14 (issue #19): throws when this site was not read this
+		 * cycle; see {@link SiteIsolation#requireSiteRead}.
+		 */
+		void requireSiteRead(String siteName) throws IOException {
+			SiteIsolation.requireSiteRead(failedSites, siteName);
 		}
 
 		SimpleJson findCamera(String mac) {

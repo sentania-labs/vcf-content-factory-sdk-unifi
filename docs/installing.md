@@ -61,6 +61,12 @@ When you click **Validate Connection** (build 14 and later):
    this instance and trusted on every collection cycle; validation stays
    on.
 
+Enter the console by a name its certificate carries (a DNS name in its
+subject alternative names, a wildcard included); when it is entered by an
+IP address the certificate does not list, the review dialog is unproven
+and Allow Insecure SSL may be the only path (tracked in the fork issue #33
+follow-up).
+
 If the console's certificate changes later (renewed or replaced),
 collection fails with a certificate error. Open the instance, click
 **Validate Connection** and accept the new certificate.

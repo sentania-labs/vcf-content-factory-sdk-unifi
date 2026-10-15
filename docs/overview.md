@@ -130,7 +130,10 @@ logged at debug only, never WARN spam.
   or rotated password costs one failed login every few cycles instead of
   one per resource. The WARN says which it was and whether the login or a
   data call was refused. Any other failure is tried again on the next
-  cycle.
+  cycle. During a wrong-password back-off the adapter instance still
+  shows **Collecting** in the account list while every UniFi object is
+  ERROR: the adapter cannot change the instance status (a framework
+  limitation).
 
 - **An unreachable controller is DOWN, not ERROR (build 14).** Connection
   refused, a connect or request timeout, an unknown host name or no route

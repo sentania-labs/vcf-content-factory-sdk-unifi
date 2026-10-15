@@ -135,10 +135,16 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 	/**
 	 * Per-cycle snapshot of the UniFi API responses, shared across all
 	 * per-resource {@code collect()} calls within one collection cycle, lives in
-	 * the {@link SnapshotCache} of the current {@link Configured} holder. A
-	 * snapshot older than this is rebuilt.
+	 * the {@link SnapshotCache} of the current {@link Configured} holder.
+	 *
+	 * <p>Build 14 (issue #12): one build per collection cycle. The cycle, not
+	 * the clock, decides reuse; this age (counted from the end of the build)
+	 * is only a safety net that rebuilds a snapshot in a cycle that has run
+	 * this long. Before build 14 the snapshot was rebuilt after 60 s counted
+	 * from the start of its build, so a build slower than 60 s was rebuilt by
+	 * every resource.
 	 */
-	private static final long MIN_REFRESH_INTERVAL_MS = 60_000L;
+	private static final long MAX_SNAPSHOT_AGE_MS = 15L * 60_000L;
 
 	/**
 	 * Build 14 (issue #11): after a failed snapshot build that is not an
@@ -196,7 +202,7 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 				new UniFiApiClient(this.httpClient,
 						componentLogger(UniFiApiClient.class)),
 				new SnapshotCache<>(System::currentTimeMillis,
-						MIN_REFRESH_INTERVAL_MS, FAILURE_RETRY_BACKOFF_MS,
+						MAX_SNAPSHOT_AGE_MS, FAILURE_RETRY_BACKOFF_MS,
 						AUTH_FAILURE_BACKOFF_MS));
 
 		// Optional vmnic→port stitch transport. Ambient mode — no describe.xml
@@ -548,8 +554,8 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 	}
 
 	/**
-	 * Return the snapshot for this cycle, refreshing it if it is null or older than
-	 * {@link #MIN_REFRESH_INTERVAL_MS}. A refresh failure (session/REST error, or an
+	 * Return the snapshot for this cycle, building it on the cycle's first call
+	 * (or after {@link #MAX_SNAPSHOT_AGE_MS} in an endless cycle). A refresh failure (session/REST error, or an
 	 * unreadable {@code /self/sites} payload) propagates out so the framework marks
 	 * the resource ERROR/DOWN, never a silent empty snapshot.
 	 *
@@ -1260,7 +1266,9 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 	 * camera resources are simply absent — never a sentinel.
 	 */
 	private static final class Snapshot {
-		final long builtAt = System.currentTimeMillis();
+		// Build 14 (issue #12): no builtAt here any more. It was a field
+		// initializer, stamped before the API calls ran; SnapshotCache now
+		// stamps the time when build() returns.
 
 		SimpleJson sites;
 		final Map<String, SimpleJson> devicesBySite = new HashMap<>();

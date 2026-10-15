@@ -23,6 +23,13 @@ import java.util.function.Consumer;
  * exception, so status mapping sees the same chain. One WARN per failed
  * build, through the supplied sink.
  *
+ * <p><b>One build per cycle (issue #12).</b> A snapshot serves the cycle it
+ * was built in and is rebuilt in the next one; {@code maxAgeMs} is only a
+ * safety net for a cycle that never ends (or a framework that stops calling
+ * {@link #beginCycle}). Its age counts from when the build finished: before
+ * build 14 it counted from when the build started, so a build slower than
+ * the refresh interval was stale on arrival and every resource rebuilt it.
+ *
  * <p>An {@link InterruptedException} (Stop Collecting) is not cached.
  *
  * <p>Thread safety: every method is {@code synchronized}; a build runs under
@@ -56,6 +63,7 @@ final class SnapshotCache<S> {
 
 	private long cycle;
 	private S value;
+	private long valueCycle;
 	private long builtAt;
 	private int builds;
 
@@ -66,7 +74,8 @@ final class SnapshotCache<S> {
 
 	/**
 	 * @param clock          the time source
-	 * @param maxAgeMs       a snapshot older than this is rebuilt
+	 * @param maxAgeMs       a snapshot older than this (counted from the end
+	 *                       of its build) is rebuilt even in its own cycle
 	 * @param retryBackoffMs how long a failure that is not authentication
 	 *                       class blocks a new build
 	 * @param authBackoffMs  how long an authentication-class failure blocks a
@@ -105,16 +114,17 @@ final class SnapshotCache<S> {
 			}
 			failure = null;
 		}
-		if (value != null && (now - builtAt) < maxAgeMs) {
+		if (value != null && valueCycle == cycle && (now - builtAt) < maxAgeMs) {
 			return value;
 		}
 		value = null;
-		long started = clock.millis();
 		try {
 			builds++;
 			S s = builder.build();
 			value = s;
-			builtAt = started;
+			valueCycle = cycle;
+			// Issue #12: stamped when the build finished, not when it began.
+			builtAt = clock.millis();
 			return s;
 		} catch (InterruptedException ie) {
 			throw ie;

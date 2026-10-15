@@ -114,6 +114,16 @@ logged at debug only, never WARN spam.
   Session cookie, login password, and `unifises` token are redacted from
   every path- and body-bearing error and log line.
 
+- **A failed snapshot is not retried per resource (build 14).** When the
+  per-cycle snapshot cannot be built (wrong password, controller down),
+  the failure is cached: the first resource reports it, every other
+  resource of that cycle fails from the cached result without contacting
+  the controller, and the adapter log gets one WARN. After an
+  authentication refusal (HTTP 401, 403 or 429) no login is tried for 15
+  minutes unless the instance is edited, so a wrong or rotated password
+  costs one failed login every few cycles instead of one per resource.
+  Any other failure is tried again on the next cycle.
+
 - **Fresh-instance discovery works on VCF Ops 9.0.2.** The adapter
   enumerates its topology on the collect path (`discoverOnCollect()`), so a
   freshly created instance populates on its first collection cycle rather

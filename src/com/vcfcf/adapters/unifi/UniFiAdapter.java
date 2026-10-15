@@ -113,7 +113,15 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 
 	private static final String ADAPTER_KIND = "unifi_controller";
 
-	private volatile UniFiApiClient api;
+	/**
+	 * Build 14 (issue #11): the API client and the snapshot cache of one
+	 * configuration, published together by one volatile write in
+	 * {@link #configureAdapter}. An instance edit publishes a new holder, so
+	 * a cached failure (and its login back-off) never outlives the settings
+	 * it failed with, and a call never pairs one configuration's client with
+	 * another's cache. Null until the first configure.
+	 */
+	private volatile Configured configured;
 
 	/**
 	 * Ambient Suite API transport for the optional vmnic→port stitch, and the
@@ -125,13 +133,39 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 	private volatile UniFiStitcher stitcher;
 
 	/**
-	 * Per-cycle snapshot of the UniFi API responses, shared across all per-resource
-	 * {@code collect()} calls within one collection cycle. {@code volatile} for
-	 * cross-thread visibility; {@link #currentSnapshot()} is {@code synchronized} so
-	 * the check-then-refresh is atomic and only one thread performs the API pull.
+	 * Per-cycle snapshot of the UniFi API responses, shared across all
+	 * per-resource {@code collect()} calls within one collection cycle, lives in
+	 * the {@link SnapshotCache} of the current {@link Configured} holder. A
+	 * snapshot older than this is rebuilt.
 	 */
-	private volatile Snapshot snapshot;
 	private static final long MIN_REFRESH_INTERVAL_MS = 60_000L;
+
+	/**
+	 * Build 14 (issue #11): after a failed snapshot build that is not an
+	 * authentication refusal, no new build before this has passed (and never
+	 * in the same cycle). Shorter than the 5-minute default collection
+	 * interval, so an unreachable controller is tried once per cycle.
+	 */
+	private static final long FAILURE_RETRY_BACKOFF_MS = 60_000L;
+
+	/**
+	 * Build 14 (issue #11): after a 401, 403 or 429, no new build (and so no
+	 * login) before this has passed, unless the instance is edited. At the
+	 * default 5-minute interval that is one failed login every fourth cycle
+	 * instead of one per resource per cycle.
+	 */
+	private static final long AUTH_FAILURE_BACKOFF_MS = 15L * 60_000L;
+
+	/** One configuration's API client and snapshot cache (immutable). */
+	private static final class Configured {
+		final UniFiApiClient api;
+		final SnapshotCache<Snapshot> snapshots;
+
+		Configured(UniFiApiClient api, SnapshotCache<Snapshot> snapshots) {
+			this.api = api;
+			this.snapshots = snapshots;
+		}
+	}
 
 	public UniFiAdapter() {
 		super(ADAPTER_KIND);
@@ -158,9 +192,12 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		UniFiConfig cfg = buildConfig(resourceConfig);
 		this.config = cfg;
 		this.httpClient = buildHttpClient(cfg);
-		this.api = new UniFiApiClient(this.httpClient,
-				componentLogger(UniFiApiClient.class));
-		this.snapshot = null;
+		this.configured = new Configured(
+				new UniFiApiClient(this.httpClient,
+						componentLogger(UniFiApiClient.class)),
+				new SnapshotCache<>(System::currentTimeMillis,
+						MIN_REFRESH_INTERVAL_MS, FAILURE_RETRY_BACKOFF_MS,
+						AUTH_FAILURE_BACKOFF_MS));
 
 		// Optional vmnic→port stitch transport. Ambient mode — no describe.xml
 		// credential fields. create() reads maintenanceuser.properties and
@@ -234,7 +271,7 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 
 	// -----------------------------------------------------------------------
 	// getTester — self-contained (controller calls it on a BARE instance:
-	// configureAdapter has NOT run, so this.api / this.config are null). Derive
+	// configureAdapter has NOT run, so this.configured / this.config are null). Derive
 	// everything from the ResourceConfig on the TestParam.
 	// -----------------------------------------------------------------------
 
@@ -299,6 +336,34 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 	@Override
 	protected boolean discoverOnCollect() {
 		return true;
+	}
+
+	/**
+	 * Build 14 (issue #11): a discovery pass is its own cycle for the
+	 * snapshot cache, so a failure cached by a collection cycle stops
+	 * blocking only by its back-off, not by a discovery call. Otherwise the
+	 * framework default: {@link #enumerateResources(ResourceSink)} into the
+	 * discovery result.
+	 */
+	@Override
+	@SuppressWarnings("rawtypes")
+	protected com.vcfcf.adapter.spi.VcfCfDiscoverer getDiscoverer() {
+		return (cfg, http, param, dr) -> {
+			beginCycle();
+			enumerateResources(dr::addResource);
+		};
+	}
+
+	/**
+	 * Build 14 (issue #11): marks the start of a collection or discovery
+	 * pass in the current configuration's snapshot cache. A no-op before
+	 * the first configure.
+	 */
+	private void beginCycle() {
+		Configured c = this.configured;
+		if (c != null) {
+			c.snapshots.beginCycle();
+		}
 	}
 
 	/**
@@ -429,10 +494,23 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 	protected VcfCfCollector<UniFiConfig> getCollector() {
 		return new VcfCfCollector<UniFiConfig>() {
 			// Discovery is framework-plumbed via discoverOnCollect()=true over
-			// enumerateResources(ResourceSink) (§22) — no needsRediscovery()/
-			// rediscover() overrides here. The framework calls
+			// enumerateResources(ResourceSink) (§22); there is no rediscover()
+			// override here. The framework calls
 			// enumerateResources(this::registerNewResource) at the top of every
 			// cycle before this collect loop runs.
+
+			/**
+			 * Build 14 (issue #11): the framework calls this exactly once at
+			 * the top of every onCollect, before discovery and the
+			 * per-resource loop, so it is the start-of-cycle hook for the
+			 * snapshot cache. Never asks for the hand-rolled rediscovery
+			 * (always false), exactly as before.
+			 */
+			@Override
+			public boolean needsRediscovery(UniFiConfig cfg) {
+				beginCycle();
+				return false;
+			}
 
 			@Override
 			public void collect(UniFiConfig cfg, ManagedHttpClient http,
@@ -473,16 +551,21 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 	 * Return the snapshot for this cycle, refreshing it if it is null or older than
 	 * {@link #MIN_REFRESH_INTERVAL_MS}. A refresh failure (session/REST error, or an
 	 * unreadable {@code /self/sites} payload) propagates out so the framework marks
-	 * the resource ERROR/DOWN — never a silent empty snapshot.
+	 * the resource ERROR/DOWN, never a silent empty snapshot.
+	 *
+	 * <p>Build 14 (issue #11): a failed refresh is cached by the
+	 * configuration's {@link SnapshotCache}: the remaining resources of the
+	 * cycle fail from it without contacting the controller (one WARN, no new
+	 * login), and so does every call until its back-off has passed.
 	 */
-	private synchronized Snapshot currentSnapshot() throws Exception {
-		Snapshot s = this.snapshot;
-		long now = System.currentTimeMillis();
-		if (s == null || (now - s.builtAt) >= MIN_REFRESH_INTERVAL_MS) {
-			s = Snapshot.build(api, this);
-			this.snapshot = s;
+	private Snapshot currentSnapshot() throws Exception {
+		Configured c = this.configured;
+		if (c == null) {
+			throw new IllegalStateException("UniFi adapter instance is not "
+					+ "configured");
 		}
-		return s;
+		return c.snapshots.get(() -> Snapshot.build(c.api, this),
+				this::logWarn);
 	}
 
 	private void dispatchCollect(ResourceConfig rc, Snapshot s, List<MetricData> out) {
@@ -1160,7 +1243,7 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		if (st != null) st.discard();
 		this.suiteStitcher = null;
 		this.stitcher = null;
-		this.snapshot = null;
+		this.configured = null;
 		super.onDiscard();
 	}
 

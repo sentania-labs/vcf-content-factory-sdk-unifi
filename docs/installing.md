@@ -95,6 +95,12 @@ for:
 - **The instance recovered from a 401 on its own** — expected. A UniFi
   session expiry produces a transient 401/403; the adapter re-logs-in and
   retries automatically (build 5+).
+- **Every UniFi object is ERROR after a password change** (build 14+).
+  The adapter log has one WARN `UniFi snapshot build failed: ... HTTP 401`.
+  After a refusal the adapter does not log in again for 15 minutes, to
+  keep the controller from rate-limiting or locking the account. Edit the
+  adapter instance with the new password: the edit takes effect on the
+  next cycle without waiting out the 15 minutes.
 - **No NVR / camera objects appear** — the UniFi Protect application is not
   installed/running on the console, or the account lacks Protect API
   access.

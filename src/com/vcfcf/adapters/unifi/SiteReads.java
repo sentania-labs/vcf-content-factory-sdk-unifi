@@ -19,6 +19,13 @@ import java.util.function.Consumer;
  * read fails as a whole only when every site fails; its cause is the first
  * site's failure, so an all-sites 401 or timeout is classified the same way
  * as a single failed call.
+ *
+ * <p>Review NIT-4: a site whose call shows the controller unreachable
+ * ({@link UniFiFailures#isUnreachable}: refused, timed out, unknown host,
+ * no route) stops the loop. The sites after it are recorded as failed
+ * without being asked, with one WARN naming them, because each would cost
+ * the same timeout and retries again (about 90 s per site at the client's
+ * 30 s timeout and three attempts).
  */
 final class SiteReads {
 
@@ -58,7 +65,8 @@ final class SiteReads {
 		Map<String, String> failed = new LinkedHashMap<>();
 		Exception first = null;
 		int failures = 0;
-		for (String site : sites) {
+		for (int i = 0; i < sites.size(); i++) {
+			String site = sites.get(i);
 			try {
 				ok.put(site, fetch.fetch(site));
 			} catch (InterruptedException ie) {
@@ -71,6 +79,20 @@ final class SiteReads {
 				warn.accept("Snapshot: " + what + " failed for site " + site
 						+ ": " + reason + ". That site's resources are ERROR "
 						+ "this cycle; the other sites are collected.");
+				if (UniFiFailures.isUnreachable(e) && i + 1 < sites.size()) {
+					List<String> rest = sites.subList(i + 1, sites.size());
+					String skipped = "not tried: site " + site
+							+ " found the controller unreachable (" + reason + ")";
+					for (String r : rest) {
+						failed.put(r, skipped);
+						failures++;
+					}
+					warn.accept("Snapshot: " + what + " not tried for site(s) "
+							+ rest + " because site " + site + " found the "
+							+ "controller unreachable. Those sites' resources "
+							+ "are ERROR this cycle.");
+					break;
+				}
 			}
 		}
 		if (!sites.isEmpty() && failures == sites.size()) {

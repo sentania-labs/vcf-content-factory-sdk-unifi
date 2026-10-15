@@ -142,7 +142,10 @@ logged at debug only, never WARN spam.
   site collects normally. The adapter log gets one WARN naming the site,
   plus the framework's own line for each resource of that site. Its existing
   relationships are left as they are. The whole cycle fails only when the
-  site list itself or every site's device list cannot be read.
+  site list itself or every site's device list cannot be read. If one
+  site's call finds the controller unreachable (refused, timed out, no
+  route), the sites after it are not asked that cycle and are ERROR too,
+  so a hung controller costs one timeout per cycle, not one per site.
 
 - **Fresh-instance discovery works on VCF Ops 9.0.2.** The adapter
   enumerates its topology on the collect path (`discoverOnCollect()`), so a

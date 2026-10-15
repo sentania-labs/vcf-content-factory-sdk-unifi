@@ -1,5 +1,8 @@
 package com.vcfcf.adapters.unifi;
 
+import java.util.Collections;
+import java.util.List;
+
 public final class UniFiConfig {
 	public final String host;
 	public final String port;
@@ -26,6 +29,39 @@ public final class UniFiConfig {
 	 */
 	static boolean parseAllowInsecure(String raw) {
 		return "true".equalsIgnoreCase(raw);
+	}
+
+	/**
+	 * Build 14 (review W1, fork issue #33): the controller endpoint VCF
+	 * Operations offers for certificate review on Validate Connection, from
+	 * the raw identifier values of the passed (possibly unsaved) config.
+	 * Empty when the host is blank, the port is not a number from 1 to
+	 * 65535, or Allow Insecure SSL is on, so the platform check stays off
+	 * and the connection test reports the real problem. The insecure test is
+	 * {@link #parseAllowInsecure} on the untrimmed value, the same one the
+	 * client uses: a stored {@code " true"} connects securely, so it must
+	 * get the dialog.
+	 *
+	 * @return {@code https://<host>:<port>/} (port 443 when blank), or empty
+	 */
+	static List<String> certificateCheckUrls(String host, String port,
+			String allowInsecure) {
+		if (parseAllowInsecure(allowInsecure)) return Collections.emptyList();
+		if (host == null || host.trim().isEmpty()) {
+			return Collections.emptyList();
+		}
+		String p = port == null ? "" : port.trim();
+		int n = 443;
+		if (!p.isEmpty()) {
+			try {
+				n = Integer.parseInt(p);
+			} catch (NumberFormatException e) {
+				return Collections.emptyList();
+			}
+			if (n < 1 || n > 65535) return Collections.emptyList();
+		}
+		return Collections.singletonList("https://" + host.trim() + ":" + n
+				+ "/");
 	}
 
 	/**

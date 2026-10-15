@@ -43,17 +43,33 @@ configuration.
 
 UniFi consoles commonly present a self-signed certificate on 443. By
 default (`allowInsecure` is `false`) the adapter validates the controller's
-certificate chain through the VCF Operations platform trust manager. This
-build does not offer the controller's certificate for review in Validate
-Connection, so an untrusted certificate (a self-signed one, for example)
-fails Test Connection with a message that says the certificate is not
-trusted.
+certificate chain through the VCF Operations platform trust manager. A
+chain is trusted when it is issued by a CA in the VCF Operations trust
+store, or when it is a certificate you accepted for this instance.
+
+When you click **Validate Connection** (build 14 and later):
+
+1. **The certificate is already trusted** (issued by a CA the VCF
+   Operations trust store holds): validation goes straight on to the
+   connection test. No dialog.
+2. **The certificate is not trusted** (the console's factory self-signed
+   certificate, or a private CA VCF Operations does not know): VCF
+   Operations shows its **Review and Accept Certificate** dialog with the
+   controller certificate. Check the details (issuer, validity,
+   thumbprint against what the console shows) and accept it. Validation
+   then runs the connection test. The accepted certificate is stored on
+   this instance and trusted on every collection cycle; validation stays
+   on.
+
+If the console's certificate changes later (renewed or replaced),
+collection fails with a certificate error. Open the instance, click
+**Validate Connection** and accept the new certificate.
 
 Setting **`allowInsecure=true`** turns certificate validation off, so the
 controller credentials and session token go to whatever answers at that
-address. Use it only where you accept that, for example a lab console with
-its factory self-signed certificate. While it is on, the adapter logs a
-WARN each time the instance is configured.
+address, and no certificate is offered for review. A self-signed console
+does not need it: accept its certificate once as above instead. While it
+is on, the adapter logs a WARN each time the instance is configured.
 
 Upgrading from build 13 or earlier: existing instances keep their stored
 `allowInsecure` value. An instance created with the old default stores
@@ -80,18 +96,19 @@ for:
 2. After installation, navigate to **Data Sources > Integrations > Accounts**.
 3. Click **Add Account** and select **VCF Content Factory UniFi Controller**.
 4. Fill in the configuration fields above (host, port `443`, controller
-   credentials; leave `allowInsecure` at `false` unless the console's
-   certificate is untrusted and you accept the lab-only opt-out described
-   under TLS above).
-5. Click **Validate Connection**, then **Add**.
+   credentials; leave `allowInsecure` at `false`).
+5. Click **Validate Connection**. For a self-signed or private-CA console,
+   VCF Operations shows the controller certificate for review: accept it
+   (see TLS above). Then click **Add**.
 6. The adapter discovers the site / device topology and begins collecting
    on the next cycle (default 5 minutes).
 
 ## Troubleshooting
 
-- **Test Connection fails on TLS** — the controller certificate is
-  untrusted (see TLS above). Set `allowInsecure=true` only if you accept
-  an unvalidated connection.
+- **Test Connection fails on TLS**: the controller certificate is
+  untrusted and was not accepted (see TLS above). Click **Validate
+  Connection** again and accept the certificate in the review dialog. Set
+  `allowInsecure=true` only if you accept an unvalidated connection.
 - **The instance recovered from a 401 on its own** — expected. A UniFi
   session expiry produces a transient 401/403; the adapter re-logs-in and
   retries automatically (build 5+).

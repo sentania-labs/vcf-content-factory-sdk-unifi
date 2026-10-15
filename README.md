@@ -18,7 +18,7 @@ Create an adapter instance under **Integrations → Repository** and provide:
 |---|---|---|
 | Host / IP Address | | — |
 | Port (HTTPS) | | 443 |
-| Allow Insecure SSL | `true` turns off certificate validation for the controller (lab use only). Any other value validates. Existing instances keep their stored value on upgrade; see [docs/installing.md](docs/installing.md). | false |
+| Allow Insecure SSL | `true` turns off certificate validation for the controller (lab use only). Any other value validates. A self-signed console does not need it: Validate Connection offers its certificate for review, you accept it once and validation stays on. Existing instances keep their stored value on upgrade; see [docs/installing.md](docs/installing.md). | false |
 
 ### Credentials
 

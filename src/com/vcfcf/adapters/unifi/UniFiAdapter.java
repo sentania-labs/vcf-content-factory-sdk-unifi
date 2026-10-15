@@ -277,6 +277,31 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 	}
 
 	// -----------------------------------------------------------------------
+	// certificateCheckUrls (framework hook; build 14, review W1, issue #33)
+	// -----------------------------------------------------------------------
+
+	/**
+	 * Build 14: the controller endpoint VCF Operations reviews on Validate
+	 * Connection, so an untrusted (for example factory self-signed)
+	 * certificate brings up the Review and Accept Certificate dialog instead
+	 * of failing Test Connection. The accepted certificate is stored on the
+	 * instance and trusted by {@code platformSsl(this)} on every cycle, with
+	 * validation still on. Derived only from the passed, possibly unsaved
+	 * config, never from instance state; empty when Allow Insecure SSL is on
+	 * (read with this pak's own {@link UniFiConfig#parseAllowInsecure}, the
+	 * parse the client uses, not the framework's trimmed one). See
+	 * {@link UniFiConfig#certificateCheckUrls}. {@code @Override} on
+	 * purpose, as compliance build 93: a buildkit older than 1.0.11 has no
+	 * such hook and must fail to compile rather than build a pak that never
+	 * offers the dialog.
+	 */
+	@Override
+	protected List<String> certificateCheckUrls(ResourceConfig rc) {
+		return UniFiConfig.certificateCheckUrls(getIdentifier(rc, "host"),
+				getIdentifier(rc, "port"), getIdentifier(rc, "allowInsecure"));
+	}
+
+	// -----------------------------------------------------------------------
 	// getTester — self-contained (controller calls it on a BARE instance:
 	// configureAdapter has NOT run, so this.configured / this.config are null). Derive
 	// everything from the ResourceConfig on the TestParam.

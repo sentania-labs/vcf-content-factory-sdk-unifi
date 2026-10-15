@@ -1,5 +1,6 @@
 package com.vcfcf.adapters.unifi;
 
+import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
 /**
@@ -19,15 +20,19 @@ import java.util.function.Consumer;
  * or rate limiting (401, 403 or 429 anywhere in the cause chain; the WARN
  * says which, see {@link UniFiFailures#refusalKind}) the back-off is
  * {@code authBackoffMs}; after any other failure it is
- * {@code retryBackoffMs}. The first caller (usually the collect-path
- * discovery step) gets the original exception; the others get a
- * {@link CachedFailureException} that describes it in its message and
- * carries its classification (authentication status, unreachable) as
- * fields, classified once when the build failed. It has no cause and no
- * stack trace, so the framework's per-resource line for it is one line,
- * not a stack trace per object per cycle. One WARN per failed build,
- * through the supplied sink; the framework still logs its own line for
- * each resource that fails.
+ * {@code retryBackoffMs}. Every caller, the one whose build failed
+ * included, gets a {@link CachedFailureException} that names the original
+ * (its class and message chain) in its message and carries its
+ * classification (authentication status, unreachable) as fields,
+ * classified once when the build failed. It has no cause and no stack
+ * trace, so no framework line for it is a stack trace: not the
+ * per-resource lines, and not the collect-path discovery WARN on the cycle
+ * that tried the login (before the devel_9_1 follow-up that caller got the
+ * original exception and the framework logged its 24-line stack on the
+ * first cycle and every back-off expiry). The original, with its stack,
+ * goes to the optional debug sink. One WARN per failed build, through the
+ * supplied sink; the framework still logs its own line for each resource
+ * that fails.
  *
  * <p><b>One build per cycle (issue #12).</b> A snapshot serves the cycle it
  * was built in and is rebuilt in the next one; {@code maxAgeMs} is only a
@@ -54,8 +59,9 @@ final class SnapshotCache<S> {
 	}
 
 	/**
-	 * A cached failure rethrown without contacting the controller. Review
-	 * W3: no cause chain and no stack trace (the framework logs the
+	 * A failed build as every caller sees it: thrown by the build that
+	 * failed (devel_9_1 follow-up) and rethrown from the cache without
+	 * contacting the controller. Review W3: no cause chain and no stack trace (the framework logs the
 	 * exception it receives once per failed resource, so a chain here was
 	 * one multi-line stack per object per cycle). What status mapping needs
 	 * is carried as fields instead, read by {@link UniFiFailures}.
@@ -100,7 +106,7 @@ final class SnapshotCache<S> {
 	private long builtAt;
 	private int builds;
 
-	private Exception failure;
+	private String failure;
 	private int failureAuth;
 	private boolean failureUnreachable;
 	private long failureCycle;
@@ -138,13 +144,26 @@ final class SnapshotCache<S> {
 	 */
 	synchronized S get(Builder<S> builder, Consumer<String> warn)
 			throws Exception {
+		return get(builder, warn, null);
+	}
+
+	/**
+	 * As {@link #get(Builder, Consumer)}, and a failed build also hands its
+	 * original exception, stack included, to {@code debug} (the adapter
+	 * logs it at DEBUG), since the exception thrown to the caller has none.
+	 *
+	 * @param debug receives the WARN line and the original exception of a
+	 *              failed build; may be {@code null}
+	 */
+	synchronized S get(Builder<S> builder, Consumer<String> warn,
+			BiConsumer<String, Exception> debug) throws Exception {
 		long now = clock.millis();
 		if (failure != null) {
 			if (failureCycle == cycle || now < retryAt) {
 				throw new CachedFailureException("UniFi controller not "
 						+ "contacted: the snapshot build failed "
 						+ secondsBetween(failedAt, now) + " s ago ("
-						+ UniFiFailures.describe(failure) + "); next attempt "
+						+ failure + "); next attempt "
 						+ nextAttempt(now), failureAuth, failureUnreachable);
 			}
 			failure = null;
@@ -164,14 +183,17 @@ final class SnapshotCache<S> {
 		} catch (InterruptedException ie) {
 			throw ie;
 		} catch (Exception e) {
-			failure = e;
+			// devel_9_1 follow-up: the class name and the message chain of the
+			// original, kept as text; the original itself is not rethrown.
+			failure = e.getClass().getSimpleName() + ": "
+					+ UniFiFailures.describe(e);
 			failureCycle = cycle;
 			failedAt = clock.millis();
 			int auth = UniFiFailures.authStatus(e);
 			failureAuth = auth;
 			failureUnreachable = UniFiFailures.isUnreachable(e);
 			retryAt = failedAt + (auth != 0 ? authBackoffMs : retryBackoffMs);
-			warn.accept("UniFi snapshot build failed: "
+			String line = "UniFi snapshot build failed: "
 					+ UniFiFailures.describe(e) + ". The other UniFi resources "
 					+ "this cycle fail from this result without contacting the "
 					+ "controller; next attempt "
@@ -180,8 +202,17 @@ final class SnapshotCache<S> {
 							+ UniFiFailures.refusalKind(e) + "; no login is tried "
 							+ "before then unless the adapter instance settings "
 							+ "are edited)" : "")
-					+ ".");
-			throw e;
+					+ ".";
+			warn.accept(line);
+			if (debug != null) {
+				debug.accept(line, e);
+			}
+			// devel_9_1 follow-up: the caller whose build failed gets the
+			// same stackless, classified exception the cache serves later,
+			// so the framework's discovery WARN on this cycle is one line.
+			throw new CachedFailureException("UniFi snapshot build failed ("
+					+ failure + "); next attempt " + nextAttempt(failedAt),
+					failureAuth, failureUnreachable);
 		}
 	}
 

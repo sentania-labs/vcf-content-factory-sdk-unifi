@@ -63,6 +63,7 @@ public final class SnapshotCacheTest {
 		unreachableFailsFastAndRetriesNextCycle();
 		failureHoldsForTheRestOfTheCycle();
 		interruptIsNotCached();
+		attemptCycleIsStacklessOnEveryAttempt();
 		System.out.println("SnapshotCacheTest: all assertions passed");
 	}
 
@@ -106,11 +107,32 @@ public final class SnapshotCacheTest {
 		List<Exception> failures = cycle(c, ctl, RESOURCES, warns);
 		T.eq(1, ctl.logins, "the second resource does not log in");
 		T.eq(RESOURCES, failures.size(), "every resource fails");
-		T.check(failures.get(0) instanceof RuntimeException
-				&& !(failures.get(0)
-						instanceof SnapshotCache.CachedFailureException),
-				"the first resource gets the original failure");
-		for (int i = 1; i < failures.size(); i++) {
+		// devel_9_1 follow-up: the attempt cycle's caller gets the same
+		// stackless, classified copy as the cached callers, so the
+		// framework's discovery WARN is one line, not a 24-line stack.
+		Exception attempt = failures.get(0);
+		T.check(attempt instanceof SnapshotCache.CachedFailureException,
+				"the attempting resource gets the classified copy, not the "
+						+ "original: " + attempt.getClass().getName());
+		T.eq(0, attempt.getStackTrace().length,
+				"no stack frames on the attempt cycle's exception");
+		T.eq(null, attempt.getCause(), "no cause chain on the attempt copy");
+		T.eq(UniFiFailures.authStatus(failures.get(1)),
+				UniFiFailures.authStatus(attempt),
+				"the attempt copy is classified as the cached copy");
+		T.eq(UniFiFailures.isUnreachable(failures.get(1)),
+				UniFiFailures.isUnreachable(attempt),
+				"the attempt copy is unreachable exactly when the cached is");
+		T.check(attempt.getMessage().contains("RuntimeException")
+				&& attempt.getMessage().contains("failed to acquire session "
+						+ "token")
+				&& attempt.getMessage().contains("HTTP 401"),
+				"the attempt line keeps the original class and message: "
+						+ attempt.getMessage());
+		T.check(failures.get(1).getMessage().contains("RuntimeException"),
+				"the cached line names the original class: "
+						+ failures.get(1).getMessage());
+		for (int i = 0; i < failures.size(); i++) {
 			Exception e = failures.get(i);
 			T.check(e instanceof SnapshotCache.CachedFailureException,
 					"resource " + i + " fails from the cache");
@@ -312,6 +334,63 @@ public final class SnapshotCacheTest {
 			throw new AssertionError("wrong failure " + e);
 		}
 		T.eq(1, ctl.logins, "no second build in the same cycle");
+	}
+
+	/**
+	 * devel_9_1 follow-up: the HTTP 403 proof case. On the first cycle and
+	 * on every back-off expiry (the cycles that try the login), the caller
+	 * gets a stackless exception classified as the cached one, and the
+	 * original, stack included, reaches only the debug sink.
+	 */
+	static void attemptCycleIsStacklessOnEveryAttempt() {
+		FakeClock clock = new FakeClock();
+		FakeController ctl = new FakeController();
+		ctl.loginStatus = 403;
+		SnapshotCache<String> c = cache(clock);
+		List<String> warns = new ArrayList<>();
+		List<Exception> debugged = new ArrayList<>();
+		for (int attemptNo = 1; attemptNo <= 2; attemptNo++) {
+			c.beginCycle();
+			Exception attempt = null;
+			Exception cached = null;
+			for (int i = 0; i < 2; i++) {
+				try {
+					c.get(ctl::build, warns::add,
+							(line, e) -> debugged.add(e));
+				} catch (Exception e) {
+					if (i == 0) attempt = e;
+					else cached = e;
+				}
+			}
+			T.eq(attemptNo, ctl.logins, "attempt " + attemptNo + " logged in");
+			T.check(attempt instanceof SnapshotCache.CachedFailureException,
+					"attempt " + attemptNo + " throws the classified copy");
+			T.eq(0, attempt.getStackTrace().length,
+					"attempt " + attemptNo + " has no stack frames");
+			T.eq(attempt.getClass(), cached.getClass(),
+					"attempt and cached are the same class");
+			T.eq(403, UniFiFailures.authStatus(attempt),
+					"attempt " + attemptNo + " carries its 403");
+			T.eq(UniFiFailures.authStatus(cached),
+					UniFiFailures.authStatus(attempt),
+					"same authentication classification as the cached copy");
+			T.eq(UniFiFailures.isUnreachable(cached),
+					UniFiFailures.isUnreachable(attempt),
+					"same reachability classification as the cached copy");
+			T.check(attempt.getMessage().contains("RuntimeException")
+					&& attempt.getMessage().contains("HTTP 403"),
+					"one line keeps class and message: " + attempt.getMessage());
+			T.check(!attempt.getMessage().contains("\n"),
+					"the message is one line");
+			clock.now += AUTH + 1; // the back-off expires
+		}
+		T.eq(2, debugged.size(), "the debug sink gets each original once");
+		T.check(debugged.get(0) instanceof RuntimeException
+				&& !(debugged.get(0)
+						instanceof SnapshotCache.CachedFailureException)
+				&& debugged.get(0).getStackTrace().length > 0,
+				"the debug sink gets the original with its stack");
+		T.eq(2, warns.size(), "one WARN per failed build");
 	}
 
 	/** Stop Collecting is not a controller failure. */

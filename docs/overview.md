@@ -121,7 +121,10 @@ logged at debug only, never WARN spam.
   fails from the cached result without contacting the controller. The
   adapter log gets one `UniFi snapshot build failed` WARN from the
   adapter, plus the framework's own line for the discovery step and for
-  each resource that fails from the cached result. After an
+  each resource that fails from the cached result. Each framework line is
+  one line naming the original failure (its class and message), with no
+  stack trace, on the cycle that tried the login as on the cycles served
+  from the cache; the original with its stack is logged at DEBUG. After an
   authentication refusal (HTTP 401 or 403) or rate limiting (HTTP 429) no
   login is tried for 15 minutes unless the instance is edited, so a wrong
   or rotated password costs one failed login every few cycles instead of

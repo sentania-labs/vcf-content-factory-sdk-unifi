@@ -599,11 +599,13 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 	 *
 	 * <p>Build 14 (issue #11): a failed refresh is cached by the
 	 * configuration's {@link SnapshotCache}: the first caller of the cycle
-	 * (usually the collect-path discovery step) gets the original failure,
-	 * and the remaining resources fail from it without contacting the
-	 * controller (no new login), as does every call until its back-off has
-	 * passed. The cache logs one "UniFi snapshot build failed" WARN; the
-	 * framework still logs its own line for each resource that fails.
+	 * (usually the collect-path discovery step) gets a one-line, stackless
+	 * copy of the failure, and the remaining resources fail from the same
+	 * kind of copy without contacting the controller (no new login), as
+	 * does every call until its back-off has passed. The cache logs one
+	 * "UniFi snapshot build failed" WARN, and the same line with the
+	 * original exception and its stack at DEBUG; the framework still logs
+	 * its own line for each resource that fails.
 	 */
 	private Snapshot currentSnapshot() throws Exception {
 		Configured c = this.configured;
@@ -612,7 +614,9 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 					+ "configured");
 		}
 		return c.snapshots.get(() -> Snapshot.build(c.api, this),
-				this::logWarn);
+				this::logWarn,
+				(line, e) -> componentLogger(SnapshotCache.class)
+						.debug(line, e));
 	}
 
 	private void dispatchCollect(ResourceConfig rc, Snapshot s, List<MetricData> out)

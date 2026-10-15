@@ -571,9 +571,12 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 	 * resource ERROR/DOWN, never a silent empty snapshot.
 	 *
 	 * <p>Build 14 (issue #11): a failed refresh is cached by the
-	 * configuration's {@link SnapshotCache}: the remaining resources of the
-	 * cycle fail from it without contacting the controller (one WARN, no new
-	 * login), and so does every call until its back-off has passed.
+	 * configuration's {@link SnapshotCache}: the first caller of the cycle
+	 * (usually the collect-path discovery step) gets the original failure,
+	 * and the remaining resources fail from it without contacting the
+	 * controller (no new login), as does every call until its back-off has
+	 * passed. The cache logs one "UniFi snapshot build failed" WARN; the
+	 * framework still logs its own line for each resource that fails.
 	 */
 	private Snapshot currentSnapshot() throws Exception {
 		Configured c = this.configured;

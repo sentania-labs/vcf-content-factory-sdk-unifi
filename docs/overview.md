@@ -116,9 +116,12 @@ logged at debug only, never WARN spam.
 
 - **A failed snapshot is not retried per resource (build 14).** When the
   per-cycle snapshot cannot be built (wrong password, controller down),
-  the failure is cached: the first resource reports it, every other
-  resource of that cycle fails from the cached result without contacting
-  the controller, and the adapter log gets one WARN. After an
+  the failure is cached: the first caller of the cycle (usually the
+  discovery step) reports it, and every other resource of that cycle
+  fails from the cached result without contacting the controller. The
+  adapter log gets one `UniFi snapshot build failed` WARN from the
+  adapter, plus the framework's own line for the discovery step and for
+  each resource that fails from the cached result. After an
   authentication refusal (HTTP 401, 403 or 429) no login is tried for 15
   minutes unless the instance is edited, so a wrong or rotated password
   costs one failed login every few cycles instead of one per resource.
@@ -133,8 +136,9 @@ logged at debug only, never WARN spam.
 - **One unreadable site does not take out the others (build 14).** If the
   device list of one site cannot be read (a permission on that site, a
   timeout, a 5xx), that site's site, device, port, radio, WAN and
-  Wireless Summary objects go to ERROR for the cycle with one WARN naming
-  the site, and every other site collects normally. Its existing
+  Wireless Summary objects go to ERROR for the cycle, and every other
+  site collects normally. The adapter log gets one WARN naming the site,
+  plus the framework's own line for each resource of that site. Its existing
   relationships are left as they are. The whole cycle fails only when the
   site list itself or every site's device list cannot be read.
 

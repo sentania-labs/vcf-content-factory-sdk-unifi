@@ -137,13 +137,17 @@ logged at debug only, never WARN spam.
 
 - **One unreadable site does not take out the others (build 14).** If the
   device list of one site cannot be read (a permission on that site, a
-  timeout, a 5xx), that site's site, device, port, radio, WAN and
-  Wireless Summary objects go to ERROR for the cycle, and every other
-  site collects normally. The adapter log gets one WARN naming the site,
-  plus the framework's own line for each resource of that site. Its existing
-  relationships are left as they are. The whole cycle fails only when the
-  site list itself or every site's device list cannot be read. If one
-  site's call finds the controller unreachable (refused, timed out, no
+  timeout, a 5xx), that site's site, device, port, radio, WAN and Wireless
+  Summary objects go to ERROR for the cycle, and every other site collects
+  normally. The adapter log gets one WARN naming the site, plus the
+  framework's own line for each resource of that site. Its existing
+  relationships are left as they are. A device that moved between that
+  site and a readable one in the meantime can briefly show the wrong site:
+  moved out of the failed site, it is under both sites; moved into it, it
+  is under neither (and ERROR, since it was not read). Both heal on the
+  first cycle the failed site is read again. The whole cycle fails only
+  when the site list itself or every site's device list cannot be read. If
+  one site's call finds the controller unreachable (refused, timed out, no
   route), the sites after it are not asked that cycle and are ERROR too,
   so a hung controller costs one timeout per cycle, not one per site.
 

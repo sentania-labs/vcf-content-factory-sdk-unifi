@@ -124,6 +124,12 @@ logged at debug only, never WARN spam.
   costs one failed login every few cycles instead of one per resource.
   Any other failure is tried again on the next cycle.
 
+- **An unreachable controller is DOWN, not ERROR (build 14).** Connection
+  refused, a connect or request timeout, an unknown host name or no route
+  to the host marks the UniFi objects DOWN (the target is down), wherever
+  the network error sits in the failure. A refused login, a certificate
+  failure or an unreadable answer is ERROR.
+
 - **One unreadable site does not take out the others (build 14).** If the
   device list of one site cannot be read (a permission on that site, a
   timeout, a 5xx), that site's site, device, port, radio, WAN and

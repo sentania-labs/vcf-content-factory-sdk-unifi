@@ -37,6 +37,35 @@ final class UniFiFailures {
 	}
 
 	/**
+	 * Issue #25: whether {@code t} means the controller could not be reached,
+	 * so the resource is DOWN (the target is down) rather than ERROR
+	 * (something is wrong with the adapter or its data). True when the cause
+	 * chain holds a {@link java.net.ConnectException}, a
+	 * {@link java.net.http.HttpTimeoutException} (which includes
+	 * {@link java.net.http.HttpConnectTimeoutException}), a
+	 * {@link java.net.SocketTimeoutException}, an
+	 * {@link java.net.UnknownHostException} or a
+	 * {@link java.net.NoRouteToHostException}, and no authentication refusal
+	 * ({@link #authStatus}): a controller that answered 401 was reached.
+	 * Certificate failures, unreadable payloads and anything unexpected stay
+	 * ERROR.
+	 */
+	static boolean isUnreachable(Throwable t) {
+		if (authStatus(t) != 0) return false;
+		Set<Throwable> seen = Collections.newSetFromMap(new IdentityHashMap<>());
+		for (Throwable c = t; c != null && seen.add(c); c = c.getCause()) {
+			if (c instanceof java.net.ConnectException
+					|| c instanceof java.net.http.HttpTimeoutException
+					|| c instanceof java.net.SocketTimeoutException
+					|| c instanceof java.net.UnknownHostException
+					|| c instanceof java.net.NoRouteToHostException) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
 	 * One line for a log or a resource error: each distinct message in the
 	 * cause chain, outermost first, joined with ": " (so the framework's
 	 * "failed to acquire session token" wrapper still shows the login

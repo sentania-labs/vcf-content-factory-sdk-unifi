@@ -544,9 +544,18 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 				}
 			}
 
+			/**
+			 * Build 14 (issue #25): DOWN when the controller could not be
+			 * reached (connect refused, connect or request timeout, unknown
+			 * host, no route), found anywhere in the cause chain, including
+			 * through the framework's login wrapper and a cached snapshot
+			 * failure. ERROR for authentication refusals, certificate
+			 * failures, unreadable payloads and anything else. Before build
+			 * 14 only a bare ConnectException was DOWN.
+			 */
 			@Override
 			public ResourceStatusEnum mapCollectException(Exception e) {
-				if (e instanceof java.net.ConnectException) {
+				if (UniFiFailures.isUnreachable(e)) {
 					return ResourceStatusEnum.RESOURCE_STATUS_DOWN;
 				}
 				return ResourceStatusEnum.RESOURCE_STATUS_ERROR;

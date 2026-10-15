@@ -14,7 +14,7 @@ trap 'rm -rf "$out"' EXIT
 javac -d "$out" -sourcepath src:tests \
     tests/com/vcfcf/adapters/unifi/*.java
 for t in AllowInsecureTest SnapshotCacheTest SnapshotTimingTest \
-        SiteReadsTest; do
+        SiteReadsTest FailureMappingTest; do
     java -cp "$out" "com.vcfcf.adapters.unifi.$t"
 done
 python3 tests/test_allow_insecure_default.py

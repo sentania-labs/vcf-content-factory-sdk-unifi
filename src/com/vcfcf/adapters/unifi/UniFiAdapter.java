@@ -184,6 +184,11 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		logInfo("UniFiAdapter configured: host=" + cfg.host + " port=" + cfg.port
 				+ " allowInsecure=" + cfg.allowInsecure
 				+ " vmnicHostStitch=" + (stitcher != null));
+		// Build 14 (issue #13): one WARN per configure while insecure mode is on.
+		String insecure = cfg.insecureWarning();
+		if (insecure != null) {
+			logWarn(insecure);
+		}
 	}
 
 	private UniFiConfig buildConfig(ResourceConfig rc) {

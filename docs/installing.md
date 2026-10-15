@@ -41,9 +41,25 @@ configuration.
 
 ## TLS — certificate trust
 
-UniFi consoles commonly present a self-signed certificate on 443. Set
-**`allowInsecure=true`** on the adapter instance, or import the
-controller's certificate into the platform trust store.
+UniFi consoles commonly present a self-signed certificate on 443. By
+default (`allowInsecure` is `false`) the adapter validates the controller's
+certificate chain through the VCF Operations platform trust manager. This
+build does not offer the controller's certificate for review in Validate
+Connection, so an untrusted certificate (a self-signed one, for example)
+fails Test Connection with a message that says the certificate is not
+trusted.
+
+Setting **`allowInsecure=true`** turns certificate validation off, so the
+controller credentials and session token go to whatever answers at that
+address. Use it only where you accept that, for example a lab console with
+its factory self-signed certificate. While it is on, the adapter logs a
+WARN each time the instance is configured.
+
+Upgrading from build 13 or earlier: existing instances keep their stored
+`allowInsecure` value. An instance created with the old default stores
+`true` and keeps skipping validation until you edit it to `false`. Only
+the exact value `true` (any letter case) turns validation off; anything
+else, including a blank value, validates.
 
 ## Configuration Fields
 
@@ -54,7 +70,7 @@ for:
 |-------|-----|----------|---------|-------|
 | Host / IP Address | `host` | Yes | — | Controller hostname or IP. |
 | Port (HTTPS) | `port` | No | 443 | Controller HTTPS port. |
-| Allow Insecure SSL | `allowInsecure` | No | false | `true` disables certificate validation for the controller (common for self-signed UniFi consoles). |
+| Allow Insecure SSL | `allowInsecure` | No | false | `true` turns off certificate validation for the controller (lab use only). Any other value validates. |
 | Username | `username` | Yes | — | UniFi controller account with Network (and Protect) API access. |
 | Password | `password` | Yes | — | Controller account password (masked). |
 
@@ -64,8 +80,9 @@ for:
 2. After installation, navigate to **Data Sources > Integrations > Accounts**.
 3. Click **Add Account** and select **VCF Content Factory UniFi Controller**.
 4. Fill in the configuration fields above (host, port `443`, controller
-   credentials; set `allowInsecure=true` if the console uses a self-signed
-   certificate).
+   credentials; leave `allowInsecure` at `false` unless the console's
+   certificate is untrusted and you accept the lab-only opt-out described
+   under TLS above).
 5. Click **Validate Connection**, then **Add**.
 6. The adapter discovers the site / device topology and begins collecting
    on the next cycle (default 5 minutes).
@@ -73,7 +90,8 @@ for:
 ## Troubleshooting
 
 - **Test Connection fails on TLS** — the controller certificate is
-  untrusted. Set `allowInsecure=true` or import the certificate.
+  untrusted (see TLS above). Set `allowInsecure=true` only if you accept
+  an unvalidated connection.
 - **The instance recovered from a 401 on its own** — expected. A UniFi
   session expiry produces a transient 401/403; the adapter re-logs-in and
   retries automatically (build 5+).

@@ -18,7 +18,7 @@ Create an adapter instance under **Integrations → Repository** and provide:
 |---|---|---|
 | Host / IP Address | | — |
 | Port (HTTPS) | | 443 |
-| Allow Insecure SSL | | true |
+| Allow Insecure SSL | `true` turns off certificate validation for the controller (lab use only). Any other value validates. Existing instances keep their stored value on upgrade; see [docs/installing.md](docs/installing.md). | false |
 
 ### Credentials
 

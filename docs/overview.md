@@ -147,9 +147,14 @@ logged at debug only, never WARN spam.
   is under neither (and ERROR, since it was not read). Both heal on the
   first cycle the failed site is read again. The whole cycle fails only
   when the site list itself or every site's device list cannot be read. If
-  one site's call finds the controller unreachable (refused, timed out, no
-  route), the sites after it are not asked that cycle and are ERROR too,
-  so a hung controller costs one timeout per cycle, not one per site.
+  one site's call cannot connect to the controller (connection refused,
+  connect timeout, unknown host, no route), the sites after it are not
+  asked that cycle and are ERROR too, so a controller that is down costs
+  one timeout per cycle, not one per site. A site whose request times out
+  after connecting (a slow, large site) is ERROR alone and the sites after
+  it are still read; a controller that accepts connections but answers
+  nothing therefore costs one timeout per site, and if every site times
+  out the objects are DOWN.
 
 - **Fresh-instance discovery works on VCF Ops 9.0.2.** The adapter
   enumerates its topology on the collect path (`discoverOnCollect()`), so a

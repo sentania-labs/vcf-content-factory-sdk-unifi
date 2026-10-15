@@ -2,6 +2,10 @@ package com.vcfcf.adapters.unifi;
 
 import java.io.IOException;
 import java.net.ConnectException;
+import java.net.NoRouteToHostException;
+import java.net.SocketTimeoutException;
+import java.net.UnknownHostException;
+import java.net.http.HttpConnectTimeoutException;
 import java.net.http.HttpTimeoutException;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -19,8 +23,11 @@ public final class SiteReadsTest {
 		everySiteFailedFailsTheRead();
 		noSitesIsNotAFailure();
 		interruptIsNotASiteFailure();
-		unreachableSiteStopsTheLoop();
+		connectTimeoutSiteStopsTheLoop();
+		readTimeoutSiteDoesNotStopTheLoop();
+		connectLevelFailuresStopTheLoop();
 		unreachableFirstSiteFailsTheReadAfterOneCall();
+		allSitesReadTimeoutIsStillDown();
 		System.out.println("SiteReadsTest: all assertions passed");
 	}
 
@@ -86,23 +93,23 @@ public final class SiteReadsTest {
 	}
 
 	/**
-	 * Review NIT-4: a site that finds the controller unreachable stops the
-	 * loop; the sites after it are failed without being asked. Sites read
-	 * before it keep their payloads.
+	 * Review NIT-4: a site whose call cannot connect (here a connect
+	 * timeout) stops the loop; the sites after it are failed without being
+	 * asked. Sites read before it keep their payloads.
 	 */
-	static void unreachableSiteStopsTheLoop() throws Exception {
+	static void connectTimeoutSiteStopsTheLoop() throws Exception {
 		List<String> warns = new ArrayList<>();
 		List<String> called = new ArrayList<>();
 		SiteReads.Result<String> r = SiteReads.readAll("stat/device",
 				List.of("default", "branch", "lab", "edge"), site -> {
 					called.add(site);
 					if ("branch".equals(site)) {
-						throw new HttpTimeoutException("request timed out");
+						throw new HttpConnectTimeoutException("HTTP connect timed out");
 					}
 					return "devices of " + site;
 				}, warns::add);
 		T.eq(List.of("default", "branch"), called,
-				"no call after the unreachable site");
+				"no call after the site that could not connect");
 		T.eq("devices of default", r.bySite.get("default"), "default read");
 		T.eq(List.of("branch", "lab", "edge"),
 				new ArrayList<>(r.failed.keySet()),
@@ -123,6 +130,83 @@ public final class SiteReadsTest {
 			return site;
 		}, w -> { });
 		T.eq(List.of("a", "b", "c"), called403, "a 403 does not stop the loop");
+	}
+
+	/**
+	 * Review N1: a request (read) timeout on one slow site fails that site
+	 * only; the healthy sites after it are still read (before, they were
+	 * ERROR for the cycle).
+	 */
+	static void readTimeoutSiteDoesNotStopTheLoop() throws Exception {
+		for (Exception slow : new Exception[] {
+				new HttpTimeoutException("request timed out"),
+				new SocketTimeoutException("Read timed out"),
+				new IOException("UniFi GET stat/device failed",
+						new HttpTimeoutException("request timed out"))}) {
+			List<String> warns = new ArrayList<>();
+			List<String> called = new ArrayList<>();
+			SiteReads.Result<String> r = SiteReads.readAll("stat/device",
+					List.of("default", "big", "lab", "edge"), site -> {
+						called.add(site);
+						if ("big".equals(site)) throw slow;
+						return "devices of " + site;
+					}, warns::add);
+			String k = slow.getClass().getSimpleName();
+			T.eq(List.of("default", "big", "lab", "edge"), called,
+					k + ": every site is asked after the slow one");
+			T.eq(List.of("big"), new ArrayList<>(r.failed.keySet()),
+					k + ": only the slow site is failed");
+			T.eq("devices of lab", r.bySite.get("lab"), k + ": lab read");
+			T.eq("devices of edge", r.bySite.get("edge"), k + ": edge read");
+			T.eq(1, warns.size(), k + ": one WARN, for the slow site");
+		}
+	}
+
+	/**
+	 * Review N1: every connect-level failure stops the loop (refused,
+	 * connect timeout, unknown host, no route), also when wrapped.
+	 */
+	static void connectLevelFailuresStopTheLoop() throws Exception {
+		for (Exception down : new Exception[] {
+				new ConnectException("Connection refused"),
+				new HttpConnectTimeoutException("HTTP connect timed out"),
+				new UnknownHostException("unifi.example"),
+				new NoRouteToHostException("No route to host"),
+				new IOException("send failed", new ConnectException("refused"))}) {
+			List<String> called = new ArrayList<>();
+			SiteReads.Result<String> r = SiteReads.readAll("stat/device",
+					List.of("a", "b", "c"), site -> {
+						called.add(site);
+						if ("b".equals(site)) throw down;
+						return site;
+					}, w -> { });
+			String k = down.getClass().getSimpleName();
+			T.eq(List.of("a", "b"), called, k + ": no call after it");
+			T.check(r.failed.get("c").contains("not tried"),
+					k + ": the later site is not tried: " + r.failed.get("c"));
+		}
+	}
+
+	/**
+	 * Review N1, the whole-controller case: when every site times out on
+	 * the read, each site was asked, and the read still fails as
+	 * unreachable, so the resources are DOWN, not ERROR.
+	 */
+	static void allSitesReadTimeoutIsStillDown() throws Exception {
+		int[] calls = {0};
+		try {
+			SiteReads.readAll("stat/device", List.of("a", "b", "c"), site -> {
+				calls[0]++;
+				throw new HttpTimeoutException("request timed out");
+			}, w -> { });
+			throw new AssertionError("every site failed: the read must fail");
+		} catch (IOException e) {
+			T.check(UniFiFailures.isUnreachable(e),
+					"an all-sites read timeout is DOWN");
+			T.check(!UniFiFailures.isConnectFailure(e),
+					"but not a connect-level failure");
+		}
+		T.eq(3, calls[0], "each site was asked");
 	}
 
 	/** Review NIT-4: unreachable on the first site costs one call, not one per site. */

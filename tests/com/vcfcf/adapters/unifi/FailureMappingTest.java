@@ -22,6 +22,7 @@ public final class FailureMappingTest {
 		unreachableIsDown();
 		wrappedUnreachableIsDown();
 		everythingElseIsError();
+		connectFailureIsNarrowerThanUnreachable();
 		System.out.println("FailureMappingTest: all assertions passed");
 	}
 
@@ -85,5 +86,54 @@ public final class FailureMappingTest {
 		RuntimeException outer = new RuntimeException("outer", loop);
 		loop.initCause(outer);
 		T.check(!UniFiFailures.isUnreachable(outer), "a cause cycle terminates");
+	}
+
+	/**
+	 * Review N1: isConnectFailure (what stops the per-site loop) is the
+	 * connect-level subset of isUnreachable. A read timeout is still DOWN
+	 * but is not connect-level.
+	 */
+	static void connectFailureIsNarrowerThanUnreachable() {
+		Throwable[] connect = {
+			new ConnectException("Connection refused"),
+			new HttpConnectTimeoutException("HTTP connect timed out"),
+			new UnknownHostException("udm.example.invalid"),
+			new NoRouteToHostException("No route to host"),
+			new RuntimeException("SessionCookieAuth: failed to acquire session "
+					+ "token", new HttpConnectTimeoutException("HTTP connect "
+							+ "timed out")),
+		};
+		for (Throwable t : connect) {
+			T.check(UniFiFailures.isConnectFailure(t),
+					t.getClass().getSimpleName() + " is connect-level");
+			T.check(UniFiFailures.isUnreachable(t),
+					t.getClass().getSimpleName() + " is also DOWN");
+		}
+		Throwable[] read = {
+			new HttpTimeoutException("request timed out"),
+			new SocketTimeoutException("Read timed out"),
+			new IOException("wrapped", new HttpTimeoutException("request timed out")),
+		};
+		for (Throwable t : read) {
+			T.check(!UniFiFailures.isConnectFailure(t),
+					t.getClass().getSimpleName() + " (read timeout) is not connect-level");
+			T.check(UniFiFailures.isUnreachable(t),
+					t.getClass().getSimpleName() + " (read timeout) is still DOWN");
+		}
+		T.check(!UniFiFailures.isConnectFailure(new UniFiHttpException(
+				"HTTP 403", 403, false)), "a 403 is not connect-level");
+		T.check(!UniFiFailures.isConnectFailure(new IOException("x",
+				new UniFiHttpException("HTTP 401", 401, false))),
+				"a refusal is never connect-level");
+		UniFiHttpException refusedOverConnect =
+				new UniFiHttpException("HTTP 401", 401, true);
+		refusedOverConnect.initCause(new ConnectException("refused"));
+		T.check(!UniFiFailures.isConnectFailure(refusedOverConnect),
+				"a controller that answered 401 was reached, whatever lies below");
+		T.check(!UniFiFailures.isConnectFailure(null), "null is not");
+		IOException loop = new IOException("loop");
+		RuntimeException outer = new RuntimeException("outer", loop);
+		loop.initCause(outer);
+		T.check(!UniFiFailures.isConnectFailure(outer), "a cause cycle terminates");
 	}
 }

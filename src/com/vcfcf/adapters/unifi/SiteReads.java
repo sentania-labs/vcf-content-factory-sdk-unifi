@@ -20,12 +20,21 @@ import java.util.function.Consumer;
  * site's failure, so an all-sites 401 or timeout is classified the same way
  * as a single failed call.
  *
- * <p>Review NIT-4: a site whose call shows the controller unreachable
- * ({@link UniFiFailures#isUnreachable}: refused, timed out, unknown host,
- * no route) stops the loop. The sites after it are recorded as failed
- * without being asked, with one WARN naming them, because each would cost
- * the same timeout and retries again (about 90 s per site at the client's
- * 30 s timeout and three attempts).
+ * <p>Review NIT-4: a site whose call cannot connect to the controller
+ * ({@link UniFiFailures#isConnectFailure}: connection refused, connect
+ * timeout, unknown host, no route) stops the loop. The sites after it are
+ * recorded as failed without being asked, with one WARN naming them,
+ * because each would cost the same timeout and retries again (about 90 s
+ * per site at the client's 30 s timeout and three attempts).
+ *
+ * <p>Review N1: a request (read) timeout does not stop the loop. The
+ * controller accepted the connection and was slow to answer that site
+ * (a large site, for example), so that site is failed and the next site is
+ * still asked; before, one slow site made every healthy site after it
+ * ERROR for the cycle. The cost is that a controller that accepts
+ * connections but answers nothing costs one timeout per site. When every
+ * site fails, the read's cause is the first failure, so an all-sites read
+ * timeout is still DOWN ({@link UniFiFailures#isUnreachable}).
  */
 final class SiteReads {
 
@@ -79,17 +88,17 @@ final class SiteReads {
 				warn.accept("Snapshot: " + what + " failed for site " + site
 						+ ": " + reason + ". That site's resources are ERROR "
 						+ "this cycle; the other sites are collected.");
-				if (UniFiFailures.isUnreachable(e) && i + 1 < sites.size()) {
+				if (UniFiFailures.isConnectFailure(e) && i + 1 < sites.size()) {
 					List<String> rest = sites.subList(i + 1, sites.size());
 					String skipped = "not tried: site " + site
-							+ " found the controller unreachable (" + reason + ")";
+							+ " could not connect to the controller (" + reason + ")";
 					for (String r : rest) {
 						failed.put(r, skipped);
 						failures++;
 					}
 					warn.accept("Snapshot: " + what + " not tried for site(s) "
-							+ rest + " because site " + site + " found the "
-							+ "controller unreachable. Those sites' resources "
+							+ rest + " because site " + site + " could not "
+							+ "connect to the controller. Those sites' resources "
 							+ "are ERROR this cycle.");
 					break;
 				}

@@ -103,6 +103,35 @@ final class UniFiFailures {
 	}
 
 	/**
+	 * Review N1: whether {@code t} is a connect-level failure, one that says
+	 * no request to the controller can get through right now: a
+	 * {@link java.net.ConnectException} (connection refused), a
+	 * {@link java.net.http.HttpConnectTimeoutException} (connect timeout),
+	 * an {@link java.net.UnknownHostException} or a
+	 * {@link java.net.NoRouteToHostException}, with no authentication
+	 * refusal in the chain. A request (read) timeout is not one: the
+	 * controller accepted the connection and was slow to answer that one
+	 * request, for example a large site, so another site may still answer.
+	 * A {@link java.net.SocketTimeoutException} is taken as a read timeout
+	 * (the framework's {@code java.net.http} client reports a connect
+	 * timeout as {@code HttpConnectTimeoutException}). Narrower than
+	 * {@link #isUnreachable}, which still maps a read timeout to DOWN.
+	 */
+	static boolean isConnectFailure(Throwable t) {
+		if (authStatus(t) != 0) return false;
+		Set<Throwable> seen = Collections.newSetFromMap(new IdentityHashMap<>());
+		for (Throwable c = t; c != null && seen.add(c); c = c.getCause()) {
+			if (c instanceof java.net.ConnectException
+					|| c instanceof java.net.http.HttpConnectTimeoutException
+					|| c instanceof java.net.UnknownHostException
+					|| c instanceof java.net.NoRouteToHostException) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
 	 * One line for a log or a resource error: each distinct message in the
 	 * cause chain, outermost first, joined with ": " (so the framework's
 	 * "failed to acquire session token" wrapper still shows the login

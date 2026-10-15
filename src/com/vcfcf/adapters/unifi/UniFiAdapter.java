@@ -170,17 +170,22 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 	 * configureAdapter and stored here: componentLogger resets the logger to
 	 * INFO on every call, so a per-failure lookup would make the cache's
 	 * DEBUG line unreachable even after an operator raised the level.
+	 * Codex P1: also the per-site stat/device cool-downs, so an instance
+	 * edit starts with none.
 	 */
 	private static final class Configured {
 		final UniFiApiClient api;
 		final Logger snapshotLog;
 		final SnapshotCache<Snapshot> snapshots;
+		final SiteReads.Cooldowns siteCooldowns;
 
 		Configured(UniFiApiClient api, Logger snapshotLog,
-				SnapshotCache<Snapshot> snapshots) {
+				SnapshotCache<Snapshot> snapshots,
+				SiteReads.Cooldowns siteCooldowns) {
 			this.api = api;
 			this.snapshotLog = snapshotLog;
 			this.snapshots = snapshots;
+			this.siteCooldowns = siteCooldowns;
 		}
 	}
 
@@ -217,7 +222,10 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 				snapshotLog,
 				new SnapshotCache<>(System::currentTimeMillis,
 						MAX_SNAPSHOT_AGE_MS, FAILURE_RETRY_BACKOFF_MS,
-						AUTH_FAILURE_BACKOFF_MS, snapshotLog::debug));
+						AUTH_FAILURE_BACKOFF_MS, snapshotLog::debug),
+				// Codex P1: same windows as the snapshot back-off.
+				new SiteReads.Cooldowns(System::currentTimeMillis,
+						AUTH_FAILURE_BACKOFF_MS, FAILURE_RETRY_BACKOFF_MS));
 
 		// Optional vmnic→port stitch transport. Ambient mode — no describe.xml
 		// credential fields. create() reads maintenanceuser.properties and
@@ -627,7 +635,8 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 			throw new IllegalStateException("UniFi adapter instance is not "
 					+ "configured");
 		}
-		return c.snapshots.get(() -> Snapshot.build(c.api, this),
+		return c.snapshots.get(
+				() -> Snapshot.build(c.api, c.siteCooldowns, this),
 				this::logWarn);
 	}
 
@@ -1381,7 +1390,8 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		int vmnicUnmatchedCount;
 		int vmnicConflictedCount;
 
-		static Snapshot build(UniFiApiClient api, UniFiAdapter adapter)
+		static Snapshot build(UniFiApiClient api,
+				SiteReads.Cooldowns siteCooldowns, UniFiAdapter adapter)
 				throws Exception {
 			Snapshot s = new Snapshot();
 			s.sites = api.listSites();
@@ -1401,12 +1411,15 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 			// Build 14 (issue #19): one site's failed stat/device marks that
 			// site failed (one WARN) and the other sites are read; the build
 			// fails only when every site fails (or /self/sites, above).
+			// Codex P1: a site refused with 401, 403 or 429 is not asked again
+			// for 15 minutes (60 s after any other failure); it stays failed.
 			List<String> siteNames = new ArrayList<>();
 			for (SimpleJson site : siteData.asList()) {
 				siteNames.add(site.get("name").asString());
 			}
 			SiteReads.Result<SimpleJson> deviceReads = SiteReads.readAll(
-					"stat/device", siteNames, api::statDevice, adapter::logWarn);
+					"stat/device", siteNames, api::statDevice, adapter::logWarn,
+					siteCooldowns, adapter::logInfo);
 			s.failedSites.putAll(deviceReads.failed);
 
 			int devTotal = 0;

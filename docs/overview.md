@@ -160,7 +160,15 @@ logged at debug only, never WARN spam.
   after connecting (a slow, large site) is ERROR alone and the sites after
   it are still read; a controller that accepts connections but answers
   nothing therefore costs one timeout per site, and if every site times
-  out the objects are DOWN.
+  out the objects are DOWN. A site whose device list is refused (HTTP
+  401 or 403, an authentication or permission refusal, or 429, rate
+  limiting) while other sites are read is not asked again for 15 minutes
+  unless the instance is edited: its objects stay ERROR, its relationships
+  are kept, and the other sites collect every cycle. The adapter log gets
+  one WARN when that cool-down starts and one INFO when it has passed and
+  the site is asked again. Any other site failure (a 5xx, a timeout) is
+  asked again on the next cycle. A refusal on every site fails the whole
+  cycle into the 15-minute back-off above, as before.
 
 - **Fresh-instance discovery works on VCF Ops 9.0.2.** The adapter
   enumerates its topology on the collect path (`discoverOnCollect()`), so a

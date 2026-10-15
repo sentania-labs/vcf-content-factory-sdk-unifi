@@ -540,6 +540,8 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 			 */
 			@Override
 			public boolean needsRediscovery(UniFiConfig cfg) {
+				// Rides on an undocumented side effect (called once per
+				// onCollect); explicit start-of-cycle hook: vcf-content-factory#221.
 				beginCycle();
 				return false;
 			}

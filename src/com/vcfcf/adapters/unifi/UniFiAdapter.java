@@ -1062,11 +1062,9 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 			rb.parent(world, siteKey);
 
 			// Build 14 (issue #19): a site not read this cycle is never a
-			// parent here. Own-adapter parents are full-set (the platform
-			// replaces a parent's children with what is emitted), so emitting
-			// it with no devices would drop its device edges for the cycle;
-			// not emitting it keeps the edges it has.
-			if (s.failedSites.containsKey(siteName)) {
+			// parent here (full-set would drop its device edges); see
+			// SiteIsolation.emitsChildren.
+			if (!SiteIsolation.emitsChildren(s.failedSites, siteName)) {
 				continue;
 			}
 
@@ -1148,8 +1146,10 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 						"nvr_mac", nvr.get("mac").asString(""));
 				// Build 14 (issue #19): not under a site that was not read
 				// (full-set would drop that site's device edges); the NVR
-				// keeps its existing site edge and its cameras below.
-				if (!s.failedSites.containsKey(siteName)) {
+				// keeps its existing site edge and its cameras below. See
+				// SiteIsolation.nvrParentSite.
+				if (java.util.Objects.equals(siteName, SiteIsolation.nvrParentSite(
+						s.siteNames(), s.failedSites))) {
 					rb.parent(siteKey, nvrKey);
 				}
 
@@ -1428,6 +1428,15 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 			return s;
 		}
 
+		/** Site names in /self/sites order. */
+		List<String> siteNames() {
+			List<String> names = new ArrayList<>();
+			for (SimpleJson site : sites.get("data").asList()) {
+				names.add(site.get("name").asString());
+			}
+			return names;
+		}
+
 		SimpleJson devicesForSite(String siteName) {
 			SimpleJson d = devicesBySite.get(siteName);
 			return d != null ? d : SimpleJson.parse("{\"data\":[]}");
@@ -1447,28 +1456,20 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		/**
 		 * The device with this MAC, or {@code null} when it is not in the
 		 * snapshot and every site was read (it is gone from the controller).
-		 * Build 14 (issue #19): when a site could not be read this cycle, a
-		 * device that is not found may be on that site, so it is unreadable,
-		 * not absent: this throws and the resource goes to ERROR.
+		 * Build 14 (issue #19): throws when a site could not be read this
+		 * cycle and the device is not found; see
+		 * {@link SiteIsolation#findDevice}.
 		 */
 		SimpleJson findDevice(String mac) throws IOException {
-			SimpleJson d = deviceByMac.get(mac);
-			if (d == null && !failedSites.isEmpty()) {
-				throw new IOException("UniFi device " + mac + " was not read "
-						+ "this cycle: stat/device failed for site(s) "
-						+ failedSites.keySet() + " ("
-						+ failedSites.values().iterator().next() + ")");
-			}
-			return d;
+			return SiteIsolation.findDevice(deviceByMac, failedSites, mac);
 		}
 
-		/** Build 14 (issue #19): throws when this site was not read this cycle. */
+		/**
+		 * Build 14 (issue #19): throws when this site was not read this
+		 * cycle; see {@link SiteIsolation#requireSiteRead}.
+		 */
 		void requireSiteRead(String siteName) throws IOException {
-			String reason = failedSites.get(siteName);
-			if (reason != null) {
-				throw new IOException("UniFi site " + siteName + " was not "
-						+ "read this cycle: stat/device failed (" + reason + ")");
-			}
+			SiteIsolation.requireSiteRead(failedSites, siteName);
 		}
 
 		SimpleJson findCamera(String mac) {

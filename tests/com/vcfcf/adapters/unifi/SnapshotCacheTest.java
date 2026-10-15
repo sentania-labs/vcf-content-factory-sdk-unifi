@@ -64,6 +64,8 @@ public final class SnapshotCacheTest {
 		failureHoldsForTheRestOfTheCycle();
 		interruptIsNotCached();
 		attemptCycleIsStacklessOnEveryAttempt();
+		debugSinkIsTheStoredOne();
+		throwingDebugSinkDoesNotPropagate();
 		System.out.println("SnapshotCacheTest: all assertions passed");
 	}
 
@@ -346,17 +348,17 @@ public final class SnapshotCacheTest {
 		FakeClock clock = new FakeClock();
 		FakeController ctl = new FakeController();
 		ctl.loginStatus = 403;
-		SnapshotCache<String> c = cache(clock);
 		List<String> warns = new ArrayList<>();
 		List<Exception> debugged = new ArrayList<>();
+		SnapshotCache<String> c = new SnapshotCache<>(clock, MAX_AGE, RETRY,
+				AUTH, (line, e) -> debugged.add(e));
 		for (int attemptNo = 1; attemptNo <= 2; attemptNo++) {
 			c.beginCycle();
 			Exception attempt = null;
 			Exception cached = null;
 			for (int i = 0; i < 2; i++) {
 				try {
-					c.get(ctl::build, warns::add,
-							(line, e) -> debugged.add(e));
+					c.get(ctl::build, warns::add);
 				} catch (Exception e) {
 					if (i == 0) attempt = e;
 					else cached = e;
@@ -391,6 +393,80 @@ public final class SnapshotCacheTest {
 				&& debugged.get(0).getStackTrace().length > 0,
 				"the debug sink gets the original with its stack");
 		T.eq(2, warns.size(), "one WARN per failed build");
+	}
+
+	/** A debug sink that records which instance was called, and with what. */
+	static final class RecordingSink
+			implements java.util.function.BiConsumer<String, Exception> {
+		final List<String> lines = new ArrayList<>();
+		final List<Exception> originals = new ArrayList<>();
+
+		@Override
+		public void accept(String line, Exception e) {
+			lines.add(line);
+			originals.add(e);
+		}
+	}
+
+	/**
+	 * Reviewer blocker on 16ade92: the DEBUG line goes to the sink stored at
+	 * construction (the adapter stores the logger it resolved once in
+	 * configureAdapter), on every failed build, never one resolved per
+	 * failure. tests/test_snapshot_logger_once.py pins the adapter side.
+	 */
+	static void debugSinkIsTheStoredOne() {
+		FakeClock clock = new FakeClock();
+		FakeController ctl = new FakeController();
+		ctl.loginStatus = 401;
+		RecordingSink stored = new RecordingSink();
+		SnapshotCache<String> c = new SnapshotCache<>(clock, MAX_AGE, RETRY,
+				AUTH, stored);
+		T.check(c.debugSink() == stored, "the cache keeps the sink it was given");
+		List<String> warns = new ArrayList<>();
+		cycle(c, ctl, RESOURCES, warns);
+		clock.now += AUTH + 1;
+		cycle(c, ctl, RESOURCES, warns);
+		T.check(c.debugSink() == stored, "still the same sink after failures");
+		T.eq(2, stored.originals.size(),
+				"the stored sink got each failed build once");
+		T.eq(warns.get(0), stored.lines.get(0),
+				"the DEBUG line is the WARN line");
+		T.check(stored.originals.get(1).getStackTrace().length > 0,
+				"the stored sink gets the original stack");
+	}
+
+	/** Reviewer NIT: a logger fault never reaches the collect path. */
+	static void throwingDebugSinkDoesNotPropagate() {
+		List<Throwable> faults = new ArrayList<>();
+		faults.add(new IllegalStateException("logger closed"));
+		faults.add(new NoSuchMethodError("Logger.debug"));
+		for (Throwable fault : faults) {
+			FakeClock clock = new FakeClock();
+			FakeController ctl = new FakeController();
+			ctl.loginStatus = 401;
+			int[] calls = {0};
+			SnapshotCache<String> c = new SnapshotCache<>(clock, MAX_AGE,
+					RETRY, AUTH, (line, e) -> {
+						calls[0]++;
+						if (fault instanceof RuntimeException) {
+							throw (RuntimeException) fault;
+						}
+						throw (Error) fault;
+					});
+			List<String> warns = new ArrayList<>();
+			List<Exception> failures = cycle(c, ctl, 3, warns);
+			T.eq(1, calls[0], "the sink was called (" + fault + ")");
+			T.eq(3, failures.size(), "every resource still fails normally");
+			for (Exception e : failures) {
+				T.check(e instanceof SnapshotCache.CachedFailureException,
+						"the caller gets the classified copy, not the sink "
+								+ "fault: " + e);
+			}
+			T.eq(401, UniFiFailures.authStatus(failures.get(0)),
+					"classification intact after a sink fault");
+			T.eq(1, warns.size(), "the WARN was still written");
+			T.eq(1, ctl.logins, "still one login");
+		}
 	}
 
 	/** Stop Collecting is not a controller failure. */

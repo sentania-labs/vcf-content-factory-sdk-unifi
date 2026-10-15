@@ -13,6 +13,7 @@ import com.vcfcf.adapter.stitch.RelationshipBuilder;
 import com.vcfcf.adapter.stitch.SuiteApiStitcher;
 
 import com.integrien.alive.common.adapter3.AdapterBase;
+import com.integrien.alive.common.adapter3.Logger;
 import com.integrien.alive.common.adapter3.MetricData;
 import com.integrien.alive.common.adapter3.MetricKey;
 import com.integrien.alive.common.adapter3.Relationships;
@@ -163,13 +164,22 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 	 */
 	private static final long AUTH_FAILURE_BACKOFF_MS = 15L * 60_000L;
 
-	/** One configuration's API client and snapshot cache (immutable). */
+	/**
+	 * One configuration's API client, snapshot cache and the snapshot
+	 * cache's logger (immutable). The logger is resolved once in
+	 * configureAdapter and stored here: componentLogger resets the logger to
+	 * INFO on every call, so a per-failure lookup would make the cache's
+	 * DEBUG line unreachable even after an operator raised the level.
+	 */
 	private static final class Configured {
 		final UniFiApiClient api;
+		final Logger snapshotLog;
 		final SnapshotCache<Snapshot> snapshots;
 
-		Configured(UniFiApiClient api, SnapshotCache<Snapshot> snapshots) {
+		Configured(UniFiApiClient api, Logger snapshotLog,
+				SnapshotCache<Snapshot> snapshots) {
 			this.api = api;
+			this.snapshotLog = snapshotLog;
 			this.snapshots = snapshots;
 		}
 	}
@@ -199,12 +209,15 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		UniFiConfig cfg = buildConfig(resourceConfig);
 		this.config = cfg;
 		this.httpClient = buildHttpClient(cfg);
+		// Resolved once per configure, never per failure (see Configured).
+		Logger snapshotLog = componentLogger(SnapshotCache.class);
 		this.configured = new Configured(
 				new UniFiApiClient(this.httpClient,
 						componentLogger(UniFiApiClient.class)),
+				snapshotLog,
 				new SnapshotCache<>(System::currentTimeMillis,
 						MAX_SNAPSHOT_AGE_MS, FAILURE_RETRY_BACKOFF_MS,
-						AUTH_FAILURE_BACKOFF_MS));
+						AUTH_FAILURE_BACKOFF_MS, snapshotLog::debug));
 
 		// Optional vmnic→port stitch transport. Ambient mode — no describe.xml
 		// credential fields. create() reads maintenanceuser.properties and
@@ -604,7 +617,8 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 	 * kind of copy without contacting the controller (no new login), as
 	 * does every call until its back-off has passed. The cache logs one
 	 * "UniFi snapshot build failed" WARN, and the same line with the
-	 * original exception and its stack at DEBUG; the framework still logs
+	 * original exception and its stack at DEBUG through the logger stored
+	 * in {@link Configured}; the framework still logs
 	 * its own line for each resource that fails.
 	 */
 	private Snapshot currentSnapshot() throws Exception {
@@ -614,9 +628,7 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 					+ "configured");
 		}
 		return c.snapshots.get(() -> Snapshot.build(c.api, this),
-				this::logWarn,
-				(line, e) -> componentLogger(SnapshotCache.class)
-						.debug(line, e));
+				this::logWarn);
 	}
 
 	private void dispatchCollect(ResourceConfig rc, Snapshot s, List<MetricData> out)

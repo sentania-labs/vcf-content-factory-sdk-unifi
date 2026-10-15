@@ -30,7 +30,11 @@ import java.util.function.Consumer;
  * that tried the login (before the devel_9_1 follow-up that caller got the
  * original exception and the framework logged its 24-line stack on the
  * first cycle and every back-off expiry). The original, with its stack,
- * goes to the optional debug sink. One WARN per failed build, through the
+ * goes to the optional debug sink given at construction. The adapter
+ * passes a logger it resolved once in configureAdapter: the framework's
+ * componentLogger resets the logger to INFO on every call, so resolving it
+ * per failure would drop every DEBUG line. A fault in the sink is
+ * swallowed; it never reaches the collect path. One WARN per failed build, through the
  * supplied sink; the framework still logs its own line for each resource
  * that fails.
  *
@@ -99,6 +103,7 @@ final class SnapshotCache<S> {
 	private final long maxAgeMs;
 	private final long retryBackoffMs;
 	private final long authBackoffMs;
+	private final BiConsumer<String, Exception> debug;
 
 	private long cycle;
 	private S value;
@@ -124,10 +129,25 @@ final class SnapshotCache<S> {
 	 */
 	SnapshotCache(Clock clock, long maxAgeMs, long retryBackoffMs,
 			long authBackoffMs) {
+		this(clock, maxAgeMs, retryBackoffMs, authBackoffMs, null);
+	}
+
+	/**
+	 * As the four-argument constructor, plus the sink that receives the WARN
+	 * line and the original exception (stack included) of each failed
+	 * build, since the exception thrown to the caller has none.
+	 *
+	 * @param debug the debug sink, stored for the life of this cache (the
+	 *              adapter passes the {@code debug} method of a logger it
+	 *              resolved once in configureAdapter); may be {@code null}
+	 */
+	SnapshotCache(Clock clock, long maxAgeMs, long retryBackoffMs,
+			long authBackoffMs, BiConsumer<String, Exception> debug) {
 		this.clock = clock;
 		this.maxAgeMs = maxAgeMs;
 		this.retryBackoffMs = retryBackoffMs;
 		this.authBackoffMs = authBackoffMs;
+		this.debug = debug;
 	}
 
 	/** Marks the start of a collection (or discovery) pass. */
@@ -144,19 +164,6 @@ final class SnapshotCache<S> {
 	 */
 	synchronized S get(Builder<S> builder, Consumer<String> warn)
 			throws Exception {
-		return get(builder, warn, null);
-	}
-
-	/**
-	 * As {@link #get(Builder, Consumer)}, and a failed build also hands its
-	 * original exception, stack included, to {@code debug} (the adapter
-	 * logs it at DEBUG), since the exception thrown to the caller has none.
-	 *
-	 * @param debug receives the WARN line and the original exception of a
-	 *              failed build; may be {@code null}
-	 */
-	synchronized S get(Builder<S> builder, Consumer<String> warn,
-			BiConsumer<String, Exception> debug) throws Exception {
 		long now = clock.millis();
 		if (failure != null) {
 			if (failureCycle == cycle || now < retryAt) {
@@ -205,7 +212,12 @@ final class SnapshotCache<S> {
 					+ ".";
 			warn.accept(line);
 			if (debug != null) {
-				debug.accept(line, e);
+				try {
+					debug.accept(line, e);
+				} catch (RuntimeException | LinkageError sinkFault) {
+					// A logger fault must never reach the collect path; the
+					// WARN above already carries the failure.
+				}
 			}
 			// devel_9_1 follow-up: the caller whose build failed gets the
 			// same stackless, classified exception the cache serves later,
@@ -223,6 +235,11 @@ final class SnapshotCache<S> {
 
 	private static long secondsBetween(long from, long to) {
 		return Math.max(0L, (to - from + 999L) / 1000L);
+	}
+
+	/** Test hook: the debug sink given at construction, or null. */
+	BiConsumer<String, Exception> debugSink() {
+		return debug;
 	}
 
 	/** Test hook: how many builds were started. */

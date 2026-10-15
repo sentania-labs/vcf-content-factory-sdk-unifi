@@ -564,10 +564,11 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 	}
 
 	/**
-	 * Return the snapshot for this cycle, building it on the cycle's first call
-	 * (or after {@link #MAX_SNAPSHOT_AGE_MS} in an endless cycle). A refresh failure (session/REST error, or an
-	 * unreadable {@code /self/sites} payload) propagates out so the framework marks
-	 * the resource ERROR/DOWN, never a silent empty snapshot.
+	 * Return the snapshot for this cycle, building it on the cycle's first
+	 * call (or after {@link #MAX_SNAPSHOT_AGE_MS} in an endless cycle). A
+	 * refresh failure (session/REST error, or an unreadable
+	 * {@code /self/sites} payload) propagates out so the framework marks the
+	 * resource ERROR/DOWN, never a silent empty snapshot.
 	 *
 	 * <p>Build 14 (issue #11): a failed refresh is cached by the
 	 * configuration's {@link SnapshotCache}: the remaining resources of the

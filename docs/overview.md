@@ -124,6 +124,14 @@ logged at debug only, never WARN spam.
   costs one failed login every few cycles instead of one per resource.
   Any other failure is tried again on the next cycle.
 
+- **One unreadable site does not take out the others (build 14).** If the
+  device list of one site cannot be read (a permission on that site, a
+  timeout, a 5xx), that site's site, device, port, radio, WAN and
+  Wireless Summary objects go to ERROR for the cycle with one WARN naming
+  the site, and every other site collects normally. Its existing
+  relationships are left as they are. The whole cycle fails only when the
+  site list itself or every site's device list cannot be read.
+
 - **Fresh-instance discovery works on VCF Ops 9.0.2.** The adapter
   enumerates its topology on the collect path (`discoverOnCollect()`), so a
   freshly created instance populates on its first collection cycle rather

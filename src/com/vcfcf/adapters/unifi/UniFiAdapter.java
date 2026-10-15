@@ -28,6 +28,7 @@ import java.io.IOException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -574,7 +575,8 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 				this::logWarn);
 	}
 
-	private void dispatchCollect(ResourceConfig rc, Snapshot s, List<MetricData> out) {
+	private void dispatchCollect(ResourceConfig rc, Snapshot s, List<MetricData> out)
+			throws IOException {
 		String kind = rc.getResourceKind();
 		if (kind == null) return;
 		switch (kind) {
@@ -632,8 +634,10 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 	// Per-kind collectors (value semantics preserved from v1)
 	// -----------------------------------------------------------------------
 
-	private void collectSite(ResourceConfig rc, Snapshot s, List<MetricData> out) {
+	private void collectSite(ResourceConfig rc, Snapshot s, List<MetricData> out)
+			throws IOException {
 		String siteName = getIdentifier(rc, "site_name");
+		s.requireSiteRead(siteName);
 		SimpleJson site = s.findSite(siteName);
 		if (site == null) {
 			logWarn("collect: site " + siteName + " absent from snapshot");
@@ -644,7 +648,8 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 				String.valueOf(site.get("device_count").asLong()));
 	}
 
-	private void collectGateway(ResourceConfig rc, Snapshot s, List<MetricData> out) {
+	private void collectGateway(ResourceConfig rc, Snapshot s, List<MetricData> out)
+			throws IOException {
 		String mac = getIdentifier(rc, "mac");
 		SimpleJson dev = s.findDevice(mac);
 		if (dev == null) {
@@ -687,7 +692,8 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		prop(out, "Configuration|name", dev.get("name").asString(""));
 	}
 
-	private void collectWanInterface(ResourceConfig rc, Snapshot s, List<MetricData> out) {
+	private void collectWanInterface(ResourceConfig rc, Snapshot s, List<MetricData> out)
+			throws IOException {
 		String key = getIdentifier(rc, "wan_name"); // "<gwMac>_wan1" | "<gwMac>_wan2"
 		int sep = key.lastIndexOf('_');
 		if (sep < 0) {
@@ -728,7 +734,8 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		}
 	}
 
-	private void collectSwitch(ResourceConfig rc, Snapshot s, List<MetricData> out) {
+	private void collectSwitch(ResourceConfig rc, Snapshot s, List<MetricData> out)
+			throws IOException {
 		String mac = getIdentifier(rc, "mac");
 		SimpleJson dev = s.findDevice(mac);
 		if (dev == null) {
@@ -776,7 +783,8 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		metric(out, "PoE|poe_budget_remaining", maxPower - poeConsumption);
 	}
 
-	private void collectSwitchPort(ResourceConfig rc, Snapshot s, List<MetricData> out) {
+	private void collectSwitchPort(ResourceConfig rc, Snapshot s, List<MetricData> out)
+			throws IOException {
 		String portKey = getIdentifier(rc, "port_key"); // "<switchMac>_<idx>"
 		int sep = portKey.lastIndexOf('_');
 		if (sep < 0) {
@@ -841,7 +849,8 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		}
 	}
 
-	private void collectAccessPoint(ResourceConfig rc, Snapshot s, List<MetricData> out) {
+	private void collectAccessPoint(ResourceConfig rc, Snapshot s, List<MetricData> out)
+			throws IOException {
 		String mac = getIdentifier(rc, "mac");
 		SimpleJson dev = s.findDevice(mac);
 		if (dev == null) {
@@ -866,7 +875,8 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		prop(out, "Configuration|name", dev.get("name").asString(""));
 	}
 
-	private void collectRadio(ResourceConfig rc, Snapshot s, List<MetricData> out) {
+	private void collectRadio(ResourceConfig rc, Snapshot s, List<MetricData> out)
+			throws IOException {
 		String radioKey = getIdentifier(rc, "radio_key"); // "<apMac>_<radioCode>"
 		int sep = radioKey.lastIndexOf('_');
 		if (sep < 0) {
@@ -923,11 +933,12 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 	}
 
 	private void collectWirelessAggregate(ResourceConfig rc, Snapshot s,
-			List<MetricData> out) {
+			List<MetricData> out) throws IOException {
 		String aggId = getIdentifier(rc, "aggregate_id"); // "<siteName>_wlan_aggregate"
 		String siteName = aggId.endsWith("_wlan_aggregate")
 				? aggId.substring(0, aggId.length() - "_wlan_aggregate".length())
 				: aggId;
+		s.requireSiteRead(siteName);
 		SimpleJson health = s.healthForSite(siteName);
 		if (health == null) {
 			logWarn("collect: wireless aggregate health for site " + siteName
@@ -1037,6 +1048,15 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 					"site_name", siteName);
 			rb.parent(world, siteKey);
 
+			// Build 14 (issue #19): a site not read this cycle is never a
+			// parent here. Own-adapter parents are full-set (the platform
+			// replaces a parent's children with what is emitted), so emitting
+			// it with no devices would drop its device edges for the cycle;
+			// not emitting it keeps the edges it has.
+			if (s.failedSites.containsKey(siteName)) {
+				continue;
+			}
+
 			SimpleJson devices = s.devicesForSite(siteName);
 			Map<String, ResourceKey> deviceByMac = new HashMap<>();
 
@@ -1113,7 +1133,12 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 				ResourceKey nvrKey = rb.resource("UniFiNvr",
 						nvr.get("name").asString("NVR"),
 						"nvr_mac", nvr.get("mac").asString(""));
-				rb.parent(siteKey, nvrKey);
+				// Build 14 (issue #19): not under a site that was not read
+				// (full-set would drop that site's device edges); the NVR
+				// keeps its existing site edge and its cameras below.
+				if (!s.failedSites.containsKey(siteName)) {
+					rb.parent(siteKey, nvrKey);
+				}
 
 				SimpleJson cameras = s.protect.get("cameras");
 				if (!cameras.isNull()) {
@@ -1275,6 +1300,11 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		final Map<String, SimpleJson> healthBySite = new HashMap<>();
 		SimpleJson protect; // nullable — Protect optional
 
+		// Build 14 (issue #19): sites whose stat/device failed this cycle,
+		// site name to reason. Their resources fail (ERROR) instead of
+		// collecting nothing; the other sites collect normally.
+		final Map<String, String> failedSites = new LinkedHashMap<>();
+
 		// Derived lookups across all sites.
 		final Map<String, SimpleJson> deviceByMac = new HashMap<>();
 		final Map<String, SimpleJson> cameraByMac = new HashMap<>();
@@ -1312,10 +1342,23 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 						+ "sentinel metrics published)");
 			}
 
-			int devTotal = 0;
+			// Build 14 (issue #19): one site's failed stat/device marks that
+			// site failed (one WARN) and the other sites are read; the build
+			// fails only when every site fails (or /self/sites, above).
+			List<String> siteNames = new ArrayList<>();
 			for (SimpleJson site : siteData.asList()) {
-				String siteName = site.get("name").asString();
-				SimpleJson devices = api.statDevice(siteName);
+				siteNames.add(site.get("name").asString());
+			}
+			SiteReads.Result<SimpleJson> deviceReads = SiteReads.readAll(
+					"stat/device", siteNames, api::statDevice, adapter::logWarn);
+			s.failedSites.putAll(deviceReads.failed);
+
+			int devTotal = 0;
+			for (String siteName : siteNames) {
+				SimpleJson devices = deviceReads.bySite.get(siteName);
+				if (devices == null) {
+					continue; // failed this cycle: no devices, no health call
+				}
 				s.devicesBySite.put(siteName, devices);
 				SimpleJson devData = devices.get("data");
 				if (!devData.isNull() && devData.isList()) {
@@ -1366,7 +1409,9 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 
 			adapter.logInfo("UniFi API snapshot: " + siteData.size() + " sites / "
 					+ devTotal + " devices / " + s.cameraByMac.size() + " cameras / "
-					+ "protect=" + (s.protect != null));
+					+ "protect=" + (s.protect != null)
+					+ (s.failedSites.isEmpty() ? ""
+							: " / unreadable sites=" + s.failedSites.keySet()));
 			return s;
 		}
 
@@ -1386,8 +1431,31 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 			return null;
 		}
 
-		SimpleJson findDevice(String mac) {
-			return deviceByMac.get(mac);
+		/**
+		 * The device with this MAC, or {@code null} when it is not in the
+		 * snapshot and every site was read (it is gone from the controller).
+		 * Build 14 (issue #19): when a site could not be read this cycle, a
+		 * device that is not found may be on that site, so it is unreadable,
+		 * not absent: this throws and the resource goes to ERROR.
+		 */
+		SimpleJson findDevice(String mac) throws IOException {
+			SimpleJson d = deviceByMac.get(mac);
+			if (d == null && !failedSites.isEmpty()) {
+				throw new IOException("UniFi device " + mac + " was not read "
+						+ "this cycle: stat/device failed for site(s) "
+						+ failedSites.keySet() + " ("
+						+ failedSites.values().iterator().next() + ")");
+			}
+			return d;
+		}
+
+		/** Build 14 (issue #19): throws when this site was not read this cycle. */
+		void requireSiteRead(String siteName) throws IOException {
+			String reason = failedSites.get(siteName);
+			if (reason != null) {
+				throw new IOException("UniFi site " + siteName + " was not "
+						+ "read this cycle: stat/device failed (" + reason + ")");
+			}
 		}
 
 		SimpleJson findCamera(String mac) {

@@ -20,10 +20,13 @@ import java.util.function.Consumer;
  * {@code authBackoffMs}; after any other failure it is
  * {@code retryBackoffMs}. The first caller (usually the collect-path
  * discovery step) gets the original exception; the others get a
- * {@link CachedFailureException} whose cause is that exception, so status
- * mapping sees the same chain. One WARN per failed build, through the
- * supplied sink; the framework still logs its own line for each resource
- * that fails.
+ * {@link CachedFailureException} that describes it in its message and
+ * carries its classification (authentication status, unreachable) as
+ * fields, classified once when the build failed. It has no cause and no
+ * stack trace, so the framework's per-resource line for it is one line,
+ * not a stack trace per object per cycle. One WARN per failed build,
+ * through the supplied sink; the framework still logs its own line for
+ * each resource that fails.
  *
  * <p><b>One build per cycle (issue #12).</b> A snapshot serves the cycle it
  * was built in and is rebuilt in the next one; {@code maxAgeMs} is only a
@@ -49,12 +52,39 @@ final class SnapshotCache<S> {
 		long millis();
 	}
 
-	/** A cached failure rethrown without contacting the controller. */
+	/**
+	 * A cached failure rethrown without contacting the controller. Review
+	 * W3: no cause chain and no stack trace (the framework logs the
+	 * exception it receives once per failed resource, so a chain here was
+	 * one multi-line stack per object per cycle). What status mapping needs
+	 * is carried as fields instead, read by {@link UniFiFailures}.
+	 */
 	static final class CachedFailureException extends Exception {
 		private static final long serialVersionUID = 1L;
 
-		CachedFailureException(String message, Throwable cause) {
-			super(message, cause);
+		private final int authStatus;
+		private final boolean unreachable;
+
+		/**
+		 * @param message     one line naming the original failure
+		 * @param authStatus  {@link UniFiFailures#authStatus} of the original
+		 * @param unreachable {@link UniFiFailures#isUnreachable} of the original
+		 */
+		CachedFailureException(String message, int authStatus,
+				boolean unreachable) {
+			super(message, null, false, false);
+			this.authStatus = authStatus;
+			this.unreachable = unreachable;
+		}
+
+		/** The original failure's authentication-class status, or 0. */
+		int authStatus() {
+			return authStatus;
+		}
+
+		/** Whether the original failure meant the controller was unreachable. */
+		boolean unreachable() {
+			return unreachable;
 		}
 	}
 
@@ -70,6 +100,8 @@ final class SnapshotCache<S> {
 	private int builds;
 
 	private Exception failure;
+	private int failureAuth;
+	private boolean failureUnreachable;
 	private long failureCycle;
 	private long failedAt;
 	private long retryAt;
@@ -112,7 +144,7 @@ final class SnapshotCache<S> {
 						+ "contacted: the snapshot build failed "
 						+ secondsBetween(failedAt, now) + " s ago ("
 						+ UniFiFailures.describe(failure) + "); next attempt "
-						+ nextAttempt(now), failure);
+						+ nextAttempt(now), failureAuth, failureUnreachable);
 			}
 			failure = null;
 		}
@@ -135,6 +167,8 @@ final class SnapshotCache<S> {
 			failureCycle = cycle;
 			failedAt = clock.millis();
 			int auth = UniFiFailures.authStatus(e);
+			failureAuth = auth;
+			failureUnreachable = UniFiFailures.isUnreachable(e);
 			retryAt = failedAt + (auth != 0 ? authBackoffMs : retryBackoffMs);
 			warn.accept("UniFi snapshot build failed: "
 					+ UniFiFailures.describe(e) + ". The other UniFi resources "

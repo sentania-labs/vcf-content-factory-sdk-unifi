@@ -10,8 +10,10 @@ import java.util.Set;
  *
  * <p>Every check walks the cause chain (cycle safe): the framework wraps a
  * failed login in {@code RuntimeException("SessionCookieAuth: failed to
- * acquire session token", cause)}, and the snapshot cache wraps a cached
- * failure, so the meaningful exception is rarely the outermost one.
+ * acquire session token", cause)}, so the meaningful exception is rarely
+ * the outermost one. A {@link SnapshotCache.CachedFailureException} has no
+ * cause; it carries the original failure's classification as fields, and
+ * those answer for it.
  */
 final class UniFiFailures {
 
@@ -26,6 +28,9 @@ final class UniFiFailures {
 	static int authStatus(Throwable t) {
 		Set<Throwable> seen = Collections.newSetFromMap(new IdentityHashMap<>());
 		for (Throwable c = t; c != null && seen.add(c); c = c.getCause()) {
+			if (c instanceof SnapshotCache.CachedFailureException) {
+				return ((SnapshotCache.CachedFailureException) c).authStatus();
+			}
 			if (c instanceof UniFiHttpException) {
 				int st = ((UniFiHttpException) c).status();
 				if (st == 401 || st == 403 || st == 429) {
@@ -54,6 +59,9 @@ final class UniFiFailures {
 		if (authStatus(t) != 0) return false;
 		Set<Throwable> seen = Collections.newSetFromMap(new IdentityHashMap<>());
 		for (Throwable c = t; c != null && seen.add(c); c = c.getCause()) {
+			if (c instanceof SnapshotCache.CachedFailureException) {
+				return ((SnapshotCache.CachedFailureException) c).unreachable();
+			}
 			if (c instanceof java.net.ConnectException
 					|| c instanceof java.net.http.HttpTimeoutException
 					|| c instanceof java.net.SocketTimeoutException

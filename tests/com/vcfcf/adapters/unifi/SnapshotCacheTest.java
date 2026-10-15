@@ -114,7 +114,12 @@ public final class SnapshotCacheTest {
 			T.check(e instanceof SnapshotCache.CachedFailureException,
 					"resource " + i + " fails from the cache");
 			T.eq(401, UniFiFailures.authStatus(e),
-					"the cached failure keeps its 401 in the cause chain");
+					"the cached failure carries its 401");
+			T.eq(null, e.getCause(), "no cause chain on the cached copy");
+			T.eq(0, e.getStackTrace().length,
+					"no stack trace on the cached copy");
+			T.check(!UniFiFailures.isUnreachable(e),
+					"a cached 401 is ERROR, not DOWN");
 			T.check(e.getMessage().contains("HTTP 401"),
 					"the cached message says why: " + e.getMessage());
 		}
@@ -210,6 +215,18 @@ public final class SnapshotCacheTest {
 			}
 		}
 		T.eq(1, attempts[0], "one attempt for the whole cycle");
+		try {
+			c.get(unreachable, warns::add);
+			throw new AssertionError("cached failure expected");
+		} catch (SnapshotCache.CachedFailureException e) {
+			T.check(UniFiFailures.isUnreachable(e),
+					"the cached copy of an unreachable failure is DOWN");
+			T.eq(null, e.getCause(), "no cause chain on the cached copy");
+			T.check(e.getMessage().contains("Connection refused"),
+					"the message names the original: " + e.getMessage());
+		} catch (Exception e) {
+			throw new AssertionError("wrong failure " + e);
+		}
 		T.eq(1, warns.size(), "one WARN");
 		clock.now += 5 * MIN;
 		c.beginCycle();

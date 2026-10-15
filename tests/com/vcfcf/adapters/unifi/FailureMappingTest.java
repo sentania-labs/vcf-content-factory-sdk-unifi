@@ -50,11 +50,14 @@ public final class FailureMappingTest {
 		// An IOException whose cause is a ConnectException.
 		T.check(UniFiFailures.isUnreachable(new IOException("send failed",
 				new ConnectException("refused"))), "wrapped connect is DOWN");
-		// The cached failure the other resources of the cycle get.
+		// The cached failure the other resources of the cycle get: no cause
+		// chain (review W3), the classification is carried as a field.
 		Throwable cached = new SnapshotCache.CachedFailureException("cached",
-				new RuntimeException("SessionCookieAuth: failed to acquire "
-						+ "session token", new UnknownHostException("udm")));
+				0, true);
 		T.check(UniFiFailures.isUnreachable(cached), "cached failure is DOWN");
+		T.check(!UniFiFailures.isUnreachable(
+				new SnapshotCache.CachedFailureException("cached", 0, false)),
+				"a cached failure that was not unreachable is ERROR");
 		// Every site timed out (SiteReads' all-failed exception).
 		T.check(UniFiFailures.isUnreachable(new IOException("UniFi "
 				+ "stat/device failed for every site (2): timed out",

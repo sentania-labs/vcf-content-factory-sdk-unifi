@@ -177,19 +177,52 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 	 */
 	private static final class Configured {
 		final UniFiApiClient api;
+		final HttpClients clients;
 		final Logger apiLog;
 		final Logger snapshotLog;
 		final SnapshotCache<Snapshot> snapshots;
 		final SiteReads.Cooldowns siteCooldowns;
 
-		Configured(UniFiApiClient api, Logger apiLog, Logger snapshotLog,
-				SnapshotCache<Snapshot> snapshots,
+		Configured(UniFiApiClient api, HttpClients clients, Logger apiLog,
+				Logger snapshotLog, SnapshotCache<Snapshot> snapshots,
 				SiteReads.Cooldowns siteCooldowns) {
 			this.api = api;
+			this.clients = clients;
 			this.apiLog = apiLog;
 			this.snapshotLog = snapshotLog;
 			this.snapshots = snapshots;
 			this.siteCooldowns = siteCooldowns;
+		}
+	}
+
+	/**
+	 * Build 15 (issue #24): the authenticated client and the raw client its
+	 * login callback posts the credentials with. Built and discarded as a
+	 * pair, so the login-only client never outlives the configuration or
+	 * the Test Connection that created it.
+	 */
+	private static final class HttpClients {
+		final ManagedHttpClient main;
+		final ManagedHttpClient login;
+
+		HttpClients(ManagedHttpClient main, ManagedHttpClient login) {
+			this.main = main;
+			this.login = login;
+		}
+
+		/** Discards both; a fault in one never skips the other. */
+		void discard() {
+			discardQuietly(main);
+			discardQuietly(login);
+		}
+
+		private static void discardQuietly(ManagedHttpClient c) {
+			if (c == null) return;
+			try {
+				c.discard();
+			} catch (RuntimeException ignored) {
+				// Release is best effort; nothing to report to the caller.
+			}
 		}
 	}
 
@@ -217,13 +250,20 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 			ResourceConfig resourceConfig) {
 		UniFiConfig cfg = buildConfig(resourceConfig);
 		this.config = cfg;
+		// Build 15 (issue #24): release what the previous configuration
+		// built. VcfCfAdapter.onConfigure has already discarded the previous
+		// main client (this.httpClient); its login-only client and the Suite
+		// API stitcher are this adapter's to release.
+		discardConfigured();
 		// Resolved once per configure, never per failure or per login (see
 		// Configured; build 15, issue #34 for the API client's logger).
 		Logger apiLog = componentLogger(UniFiApiClient.class);
 		Logger snapshotLog = componentLogger(SnapshotCache.class);
-		this.httpClient = buildHttpClient(cfg, apiLog);
+		HttpClients clients = buildHttpClient(cfg, apiLog);
+		this.httpClient = clients.main;
 		this.configured = new Configured(
-				new UniFiApiClient(this.httpClient, apiLog),
+				new UniFiApiClient(clients.main, apiLog),
+				clients,
 				apiLog,
 				snapshotLog,
 				new SnapshotCache<>(System::currentTimeMillis,
@@ -276,8 +316,10 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 	 *        (build 15, issue #34): the login callback runs on every login
 	 *        and must not look it up again, since each lookup resets the
 	 *        logger to INFO.
+	 * @return the authenticated client with the login-only client it uses
+	 *         (build 15, issue #24), so the caller discards both
 	 */
-	private ManagedHttpClient buildHttpClient(UniFiConfig cfg, Logger apiLog) {
+	private HttpClients buildHttpClient(UniFiConfig cfg, Logger apiLog) {
 		// Raw client for the login round-trip (no auth strategy attached yet).
 		ManagedHttpClient rawHttp = baseBuilder(cfg).build();
 
@@ -288,7 +330,7 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 				() -> UniFiApiClient.login(rawHttp, apiLog,
 						cfg.username, cfg.password));
 
-		return baseBuilder(cfg).auth(auth).build();
+		return new HttpClients(baseBuilder(cfg).auth(auth).build(), rawHttp);
 	}
 
 	private HttpClientBuilder baseBuilder(UniFiConfig cfg) {
@@ -356,9 +398,10 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 			Configured c = this.configured;
 			Logger apiLog = c != null ? c.apiLog
 					: componentLogger(UniFiApiClient.class);
-			ManagedHttpClient testHttp = buildHttpClient(testCfg, apiLog);
+			HttpClients testHttp = buildHttpClient(testCfg, apiLog);
 			try {
-				UniFiApiClient testApi = new UniFiApiClient(testHttp, apiLog);
+				UniFiApiClient testApi = new UniFiApiClient(testHttp.main,
+						apiLog);
 				SimpleJson sites = testApi.listSites();
 				SimpleJson data = sites.get("data");
 				if (data.isNull() || !data.isList()) {
@@ -368,6 +411,7 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 				logInfo("Test OK: connected to " + testCfg.host + ", "
 						+ data.size() + " site(s)");
 			} finally {
+				// Build 15 (issue #24): the login-only client too.
 				testHttp.discard();
 			}
 		};
@@ -1352,12 +1396,34 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 
 	@Override
 	public void onDiscard() {
-		SuiteApiStitcher st = this.suiteStitcher;
-		if (st != null) st.discard();
-		this.suiteStitcher = null;
-		this.stitcher = null;
+		// Build 15 (issue #24): the login-only client and the stitcher;
+		// super.onDiscard() releases the main client (this.httpClient).
+		discardConfigured();
 		this.configured = null;
 		super.onDiscard();
+	}
+
+	/**
+	 * Build 15 (issue #24): releases the current configuration's HTTP
+	 * clients (the login-only client included) and the Suite API stitcher,
+	 * on reconfigure and on discard. Discarding the main client a second
+	 * time after the framework has is harmless (it only clears the session).
+	 */
+	private void discardConfigured() {
+		Configured c = this.configured;
+		if (c != null) {
+			c.clients.discard();
+		}
+		SuiteApiStitcher st = this.suiteStitcher;
+		this.suiteStitcher = null;
+		this.stitcher = null;
+		if (st != null) {
+			try {
+				st.discard();
+			} catch (RuntimeException ignored) {
+				// Best effort; the token TTL is the platform's safety net.
+			}
+		}
 	}
 
 	// -----------------------------------------------------------------------

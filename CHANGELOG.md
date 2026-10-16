@@ -7,6 +7,7 @@ is unchanged until a `v1.1.0.15` tag. The factory brief is
 knowledge/designs/sdk-adapters/unifi-build-15-correctness-and-hygiene.md.
 
 - fix(adapter): build 15, issue #34: the UniFiApiClient logger is resolved once per configure, stored on the configuration holder and handed to the login callback, instead of being looked up on every login and twice per Test Connection. The framework's componentLogger resets a logger to INFO on every lookup, so a DEBUG line in the client could never have been seen. Test Connection on a bare instance (the usual case) looks it up once. No log line changes today. Tests: tests/test_snapshot_logger_once.py.
+- fix(adapter): build 15, issue #24: HTTP clients and the Suite API stitcher are released. The login-only client that posts the credentials is now built and discarded together with the authenticated client: in Test Connection's `finally`, on an instance edit and when the instance is discarded. An instance edit also releases the previous Suite API stitcher (its token) before building the new one. Already true before this build, from the framework (`VcfCfAdapter.onConfigure` and `onDiscard`): the previous authenticated client was discarded on an edit and the current one on discard. Note: the framework's `ManagedHttpClient.discard()` clears the session only and does not close the JDK client underneath, so the connection pool is left to garbage collection; that part is a framework matter, not this pak's. Tests: tests/test_client_discard.py (structural; the adapter class needs the SDK jar).
 
 ## 0.0.0.14 (Unreleased)
 

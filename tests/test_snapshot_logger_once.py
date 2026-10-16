@@ -56,7 +56,7 @@ def api_logger_once():
         "the API client logger is not stored in the Configured holder"
     assert "buildHttpClient(cfg, apiLog)" in configure, \
         "configureAdapter does not hand the resolved logger to the login callback"
-    build = method_body("ManagedHttpClient", "buildHttpClient")
+    build = method_body("HttpClients", "buildHttpClient")
     assert "componentLogger" not in build, \
         "buildHttpClient (the login callback) looks a logger up per login"
     tester = method_body("VcfCfTester<UniFiConfig>", "getTester")

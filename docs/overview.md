@@ -157,7 +157,9 @@ logged at debug only, never WARN spam.
   the controller reports without a MAC, a switch port without a
   `port_idx` and a radio without a radio code (for example on a device
   pending adoption) is not discovered, not related and not counted in the
-  site's Device Count or the NVR's Camera Count. An NVR without a MAC is
+  site's Device Count or the NVR's Camera Count. A device pending adoption
+  (`adopted: false`) is not discovered or counted either until it is
+  adopted. An NVR without a MAC is
   not registered either; its cameras still are, with no parent in the
   tree. Device Count counts only gateways, switches and access points, the
   types the pack discovers. Each skip is logged at DEBUG, and the `UniFi

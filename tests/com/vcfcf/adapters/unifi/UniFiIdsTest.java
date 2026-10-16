@@ -47,13 +47,17 @@ public final class UniFiIdsTest {
 	/** Peer review 6: Device Count counts what discovery registers. */
 	static void discoveredDevices() {
 		for (String t : new String[]{"udm", "ugw", "uxg", "usw", "uap"}) {
-			T.check(UniFiIds.discoveredDevice(t, "aa:bb"), t + " with a MAC");
-			T.check(!UniFiIds.discoveredDevice(t, ""), t + " without a MAC");
-			T.check(!UniFiIds.discoveredDevice(t, null), t + " with no MAC field");
+			T.check(UniFiIds.discoveredDevice(t, "aa:bb", true), t + " adopted");
+			T.check(UniFiIds.discoveredDevice(t, "aa:bb", null),
+					t + " without the adopted field counts as adopted");
+			T.check(!UniFiIds.discoveredDevice(t, "aa:bb", false),
+					t + " pending adoption: neither registered nor counted (Codex P2)");
+			T.check(!UniFiIds.discoveredDevice(t, "", true), t + " without a MAC");
+			T.check(!UniFiIds.discoveredDevice(t, null, true), t + " with no MAC field");
 		}
-		T.check(!UniFiIds.discoveredDevice("uph", "aa:bb"), "other types are not");
-		T.check(!UniFiIds.discoveredDevice("", "aa:bb"), "no type is not");
-		T.check(!UniFiIds.discoveredDevice(null, "aa:bb"), "null type is not");
+		T.check(!UniFiIds.discoveredDevice("uph", "aa:bb", true), "other types are not");
+		T.check(!UniFiIds.discoveredDevice("", "aa:bb", true), "no type is not");
+		T.check(!UniFiIds.discoveredDevice(null, "aa:bb", true), "null type is not");
 	}
 
 	/** #22: the site is one path segment; ordinary names are unchanged. */

@@ -78,15 +78,21 @@ final class UniFiIds {
 	}
 
 	/**
-	 * Peer review 6: whether discovery registers this {@code stat/device}
-	 * record: a gateway, switch ({@code usw}) or access point ({@code uap})
-	 * with a MAC. Other types (for example a camera or a power device the
-	 * Network application lists) and MAC-less records are not discovered,
-	 * so they are not counted in the site's Device Count either.
+	 * Peer review 6, Codex P2: whether discovery registers this
+	 * {@code stat/device} record, and so whether the site's Device Count
+	 * counts it (one rule for both): a gateway, switch ({@code usw}) or
+	 * access point ({@code uap}) with a MAC that is not pending adoption.
+	 * Other types (for example a camera or a power device the Network
+	 * application lists), MAC-less records and a device whose
+	 * {@code adopted} is {@code false} (it has no statistics, so it would
+	 * publish properties only) are not discovered. A record without the
+	 * {@code adopted} field counts as adopted.
+	 *
+	 * @param adopted the record's {@code adopted}, null when absent
 	 */
-	static boolean discoveredDevice(String type, String rawMac) {
+	static boolean discoveredDevice(String type, String rawMac, Boolean adopted) {
 		boolean kind = isGatewayType(type) || "usw".equals(type) || "uap".equals(type);
-		return kind && mac(rawMac) != null;
+		return kind && mac(rawMac) != null && !Boolean.FALSE.equals(adopted);
 	}
 
 	/**

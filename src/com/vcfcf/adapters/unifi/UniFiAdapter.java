@@ -554,6 +554,9 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 				// (Snapshot.build logs it at DEBUG).
 				String mac = deviceMac(dev);
 				if (mac == null) continue;
+				// Codex P2: a device pending adoption is not registered (the
+				// same rule as the site's Device Count; isDiscovered).
+				if (!isDiscovered(dev)) continue;
 				String name = deviceDisplayName(dev);
 
 				if (isGateway(type)) {
@@ -887,17 +890,13 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		prop(out, "Configuration|description", site.get("desc").asString(""));
 		// Build 15 (issue #18): counted from this cycle's stat/device for the
 		// site (the site was read: requireSiteRead above), not read from the
-		// /self/sites entry. Counts adopted devices: a device whose
-		// "adopted" is false (pending adoption) is not counted, a device that
-		// does not carry the field is.
+		// /self/sites entry. Review N8, peer review 6, Codex P2: counts
+		// exactly the devices discovery registers (isDiscovered: a gateway,
+		// switch or access point with a MAC, not pending adoption; a device
+		// without the "adopted" field counts as adopted).
 		int adopted = 0;
 		for (SimpleJson dev : s.devicesForSite(siteName).get("data").asList()) {
-			SimpleJson a = dev.get("adopted");
-			// Review N8, peer review 6: only devices discovery registers (a
-			// gateway, switch or access point with a MAC).
-			if (!UniFiIds.discoveredDevice(dev.get("type").asString(""),
-					dev.get("mac").asString())) continue;
-			if (a.isNull() || a.asBoolean()) adopted++;
+			if (isDiscovered(dev)) adopted++;
 		}
 		prop(out, "Configuration|device_count", String.valueOf(adopted));
 		// Build 15 (issue #18): version (Network application) and timezone
@@ -1394,6 +1393,7 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 				String type = dev.get("type").asString("");
 				String mac = deviceMac(dev);
 				if (mac == null) continue; // build 15, issue #23
+				if (!isDiscovered(dev)) continue; // Codex P2: as discovery
 				String name = deviceDisplayName(dev);
 				ResourceKey devKey;
 
@@ -1549,6 +1549,17 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 	/** Build 15 (issue #23): the device MAC, or null when it has none. */
 	private static String deviceMac(SimpleJson dev) {
 		return UniFiIds.mac(dev.get("mac").asString());
+	}
+
+	/**
+	 * Codex P2: whether discovery registers this device, the one rule
+	 * enumeration, relationships, the stitch port index and the site's
+	 * Device Count share; see {@link UniFiIds#discoveredDevice}.
+	 */
+	private static boolean isDiscovered(SimpleJson dev) {
+		SimpleJson a = dev.get("adopted");
+		return UniFiIds.discoveredDevice(dev.get("type").asString(""),
+				dev.get("mac").asString(), a.isNull() ? null : a.asBoolean());
 	}
 
 	/** Build 15 (peer review 7): the radio code, or null when it has none. */
@@ -2154,6 +2165,7 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 				if (!"usw".equals(dev.get("type").asString(""))) continue;
 				String switchMac = deviceMac(dev);
 				if (switchMac == null) continue; // build 15, issue #23
+				if (!isDiscovered(dev)) continue; // Codex P2: no port resources
 				String devName = dev.get("name").asString("");
 				SimpleJson ports = dev.get("port_table");
 				if (ports.isNull()) continue;

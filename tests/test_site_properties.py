@@ -34,9 +34,16 @@ def main():
         "device_count is still read from the /self/sites entry"
     assert "s.devicesForSite(siteName)" in site and '"adopted"' in site, \
         "device_count is not counted from the site's adopted devices"
-    assert re.search(r"if \(!UniFiIds\.discoveredDevice\(dev\.get\(\"type\"\)\.asString\(\"\"\),"
-                     r"\s*dev\.get\(\"mac\"\)\.asString\(\)\)\) continue;", site), \
-        "device_count counts devices discovery does not register (review N8, peer 6)"
+    assert "if (isDiscovered(dev)) adopted++;" in site, \
+        "device_count does not use discovery's rule (review N8, peer 6, Codex P2)"
+    assert 'dev.get("adopted")' not in site, "device_count keeps its own adopted rule"
+    disc = method_body("boolean", "isDiscovered")
+    assert "UniFiIds.discoveredDevice(" in disc and '"adopted"' in disc
+    for name, ret in (("enumerateResources", "void"),
+                      ("buildRelationships", "Relationships"),
+                      ("buildOwnPortIndex", r"Map<String, List<OwnPort>>")):
+        assert "if (!isDiscovered(dev)) continue;" in method_body(ret, name), \
+            f"{name} registers a device pending adoption (Codex P2)"
     nvr = method_body("void", "collectNvr")
     assert re.search(r'if \(UniFiIds\.mac\(cam\.get\("mac"\)\.asString\(\)\) != null\) cameraCount\+\+;', nvr), \
         "camera_count counts cameras the guard skips (peer review 6)"

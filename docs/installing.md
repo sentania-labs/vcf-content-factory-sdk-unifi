@@ -124,8 +124,10 @@ for:
 
 ## Step-by-Step Installation
 
-1. Install the `.pak` file via **Administration > Solutions > Add**.
-2. After installation, navigate to **Data Sources > Integrations > Accounts**.
+1. Install the `.pak` file via **Administration > Integrations > Repository
+   > Add** (9.x; on 8.x, **Data Sources > Integrations > Repository**).
+2. After installation, navigate to **Administration > Integrations >
+   Accounts** (9.x; on 8.x, **Data Sources > Integrations > Accounts**).
 3. Click **Add Account** and select **VCF Content Factory UniFi Controller**.
 4. Fill in the configuration fields above (host, port `443`, controller
    credentials; leave `allowInsecure` at `false`).

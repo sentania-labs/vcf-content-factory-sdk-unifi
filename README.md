@@ -8,11 +8,11 @@ Full docset (overview, installing & configuring, inventory tree): [`docs/README.
 
 ## Installation
 
-Upload the `.pak` file via **Administration → Solutions** in VCF Operations.
+Upload the `.pak` file via **Administration > Integrations > Repository > Add** in VCF Operations (9.x; on 8.x, **Data Sources > Integrations > Repository**).
 
 ## Configuration
 
-Create an adapter instance under **Integrations → Repository** and provide:
+Create an adapter instance under **Administration > Integrations > Accounts > Add Account** (9.x; on 8.x, **Data Sources > Integrations > Accounts**) and provide:
 
 | Field | Description | Default |
 |---|---|---|

@@ -38,7 +38,9 @@ def main():
         "device_count does not use discovery's rule (review N8, peer 6, Codex P2)"
     assert 'dev.get("adopted")' not in site, "device_count keeps its own adopted rule"
     disc = method_body("boolean", "isDiscovered")
-    assert "UniFiIds.discoveredDevice(" in disc and '"adopted"' in disc
+    assert "UniFiIds.discoveredDevice(" in disc and 'dev.get("adopted")' in disc
+    assert "a.isNull() ? null : a.asBoolean())" in disc, \
+        "isDiscovered does not hand the adopted flag to the rule (Codex P2)"
     for name, ret in (("enumerateResources", "void"),
                       ("buildRelationships", "Relationships"),
                       ("buildOwnPortIndex", r"Map<String, List<OwnPort>>")):

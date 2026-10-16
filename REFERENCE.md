@@ -1,6 +1,6 @@
 # VCF Content Factory UniFi Controller — Reference
 
-Generated from `describe.xml` and `resources.properties` for build 1.0.0.4.
+Generated from `describe.xml` and `resources.properties` for build 15 (dev 0.0.0.15).
 
 ## Adapter
 
@@ -22,7 +22,7 @@ Generated from `describe.xml` and `resources.properties` for build 1.0.0.4.
 
 | Field | Key | Default | Required |
 |---|---|---|---|
-| Host / IP Address | `host` | — | Yes |
+| Host / IP Address | `host` | - | Yes |
 | Port (HTTPS) | `port` | 443 | No |
 | Allow Insecure SSL | `allowInsecure` | false | No |
 
@@ -44,10 +44,10 @@ Generated from `describe.xml` and `resources.properties` for build 1.0.0.4.
 
 | Key | Label | Type | Unit | Monitored |
 |---|---|---|---|---|
-| `description` | Description | property | — | — |
-| `version` | Version | property | — | — |
-| `timezone` | Timezone | property | — | — |
-| `device_count` | Device Count | property | — | — |
+| `description` | Description | property | - | - |
+| `version` | Version | property | - | - |
+| `timezone` | Timezone | property | - | - |
+| `device_count` | Device Count | property | - | - |
 
 ---
 
@@ -62,13 +62,13 @@ Generated from `describe.xml` and `resources.properties` for build 1.0.0.4.
 | `cpu_pct` | CPU % | metric | % | yes |
 | `mem_pct` | Memory % | metric | % | yes |
 | `uptime` | Uptime | metric | sec | yes |
-| `num_sta` | Connected Clients | metric | — | yes |
+| `num_sta` | Connected Clients | metric | - | yes |
 
 #### Status
 
 | Key | Label | Type | Unit | Monitored |
 |---|---|---|---|---|
-| `state` | State (1 = connected) | metric |  | yes |
+| `state` | State (1 = connected) | metric | - | yes |
 
 #### Temperature
 
@@ -90,12 +90,12 @@ Generated from `describe.xml` and `resources.properties` for build 1.0.0.4.
 
 | Key | Label | Type | Unit | Monitored |
 |---|---|---|---|---|
-| `model` | Model | property | — | — |
-| `firmware` | Firmware | property | — | — |
-| `serial` | Serial Number | property | — | — |
-| `ip` | IP Address | property | — | — |
-| `mac_address` | MAC Address | property | — | — |
-| `name` | Name | property | — | — |
+| `model` | Model | property | - | - |
+| `firmware` | Firmware | property | - | - |
+| `serial` | Serial Number | property | - | - |
+| `ip` | IP Address | property | - | - |
+| `mac_address` | MAC Address | property | - | - |
+| `name` | Name | property | - | - |
 
 ---
 
@@ -124,11 +124,11 @@ Generated from `describe.xml` and `resources.properties` for build 1.0.0.4.
 
 | Key | Label | Type | Unit | Monitored |
 |---|---|---|---|---|
-| `type` | Type | property | — | — |
-| `ip` | IP Address | property | — | — |
-| `netmask` | Netmask | property | — | — |
-| `gateway_ip` | Gateway IP | property | — | — |
-| `dns` | DNS | property | — | — |
+| `type` | Type | property | - | - |
+| `ip` | IP Address | property | - | - |
+| `netmask` | Netmask | property | - | - |
+| `gateway_ip` | Gateway IP | property | - | - |
+| `dns` | DNS | property | - | - |
 
 ---
 
@@ -143,14 +143,14 @@ Generated from `describe.xml` and `resources.properties` for build 1.0.0.4.
 | `cpu_pct` | CPU % | metric | % | yes |
 | `mem_pct` | Memory % | metric | % | yes |
 | `uptime` | Uptime | metric | sec | yes |
-| `num_sta` | Connected Clients | metric | — | yes |
+| `num_sta` | Connected Clients | metric | - | yes |
 | `satisfaction` | Satisfaction | metric | % | yes |
 
 #### Status
 
 | Key | Label | Type | Unit | Monitored |
 |---|---|---|---|---|
-| `state` | State (1 = connected) | metric |  | yes |
+| `state` | State (1 = connected) | metric | - | yes |
 
 #### PoE
 
@@ -164,15 +164,15 @@ Generated from `describe.xml` and `resources.properties` for build 1.0.0.4.
 
 | Key | Label | Type | Unit | Monitored |
 |---|---|---|---|---|
-| `model` | Model | property | — | — |
-| `firmware` | Firmware | property | — | — |
-| `serial` | Serial Number | property | — | — |
-| `ip` | IP Address | property | — | — |
-| `mac_address` | MAC Address | property | — | — |
-| `name` | Name | property | — | — |
-| `port_count` | Port Count | property | — | — |
-| `poe_capable` | PoE Capable | property | — | — |
-| `has_fan` | Has Fan | property | — | — |
+| `model` | Model | property | - | - |
+| `firmware` | Firmware | property | - | - |
+| `serial` | Serial Number | property | - | - |
+| `ip` | IP Address | property | - | - |
+| `mac_address` | MAC Address | property | - | - |
+| `name` | Name | property | - | - |
+| `port_count` | Port Count | property | - | - |
+| `poe_capable` | PoE Capable | property | - | - |
+| `has_fan` | Has Fan | property | - | - |
 
 ---
 
@@ -186,8 +186,8 @@ Generated from `describe.xml` and `resources.properties` for build 1.0.0.4.
 |---|---|---|---|---|
 | `tx_bytes` | TX Bytes | metric | bytes | yes |
 | `rx_bytes` | RX Bytes | metric | bytes | yes |
-| `tx_errors` | TX Errors | metric | — | yes |
-| `rx_errors` | RX Errors | metric | — | yes |
+| `tx_errors` | TX Errors | metric | - | yes |
+| `rx_errors` | RX Errors | metric | - | yes |
 | `tx_rate` | TX Rate | metric | bytes/s | yes |
 | `rx_rate` | RX Rate | metric | bytes/s | yes |
 
@@ -196,14 +196,14 @@ Generated from `describe.xml` and `resources.properties` for build 1.0.0.4.
 | Key | Label | Type | Unit | Monitored |
 |---|---|---|---|---|
 | `satisfaction` | Satisfaction | metric | % | yes |
-| `mac_table_count` | MAC Table Count | metric | — | no |
-| `up` | Link Up | property | — | — |
-| `speed` | Speed | property | — | — |
-| `duplex` | Duplex | property | — | — |
-| `is_uplink` | Is Uplink | property | — | — |
-| `media` | Media | property | — | — |
-| `stp_state` | STP State | property | — | — |
-| `port_name` | Port Name | property | — | — |
+| `mac_table_count` | MAC Table Count | metric | - | no |
+| `up` | Link Up | property | - | - |
+| `speed` | Speed | property | - | - |
+| `duplex` | Duplex | property | - | - |
+| `is_uplink` | Is Uplink | property | - | - |
+| `media` | Media | property | - | - |
+| `stp_state` | STP State | property | - | - |
+| `port_name` | Port Name | property | - | - |
 
 #### PoE
 
@@ -212,9 +212,9 @@ Generated from `describe.xml` and `resources.properties` for build 1.0.0.4.
 | `poe_power` | PoE Power | metric | W | yes |
 | `poe_voltage` | PoE Voltage | metric | V | no |
 | `poe_current` | PoE Current | metric | mA | no |
-| `poe_enable` | PoE Enabled | property | — | — |
-| `poe_class` | PoE Class | property | — | — |
-| `poe_mode` | PoE Mode | property | — | — |
+| `poe_enable` | PoE Enabled | property | - | - |
+| `poe_class` | PoE Class | property | - | - |
+| `poe_mode` | PoE Mode | property | - | - |
 
 #### LLDP
 
@@ -235,8 +235,8 @@ Generated from `describe.xml` and `resources.properties` for build 1.0.0.4.
 
 | Key | Label | Type | Unit | Monitored |
 |---|---|---|---|---|
-| `lldp_system_name` | LLDP System Name | property | — | — |
-| `lldp_port_id` | LLDP Port ID | property | — | — |
+| `lldp_system_name` | LLDP System Name | property | - | - |
+| `lldp_port_id` | LLDP Port ID | property | - | - |
 
 ---
 
@@ -251,25 +251,25 @@ Generated from `describe.xml` and `resources.properties` for build 1.0.0.4.
 | `cpu_pct` | CPU % | metric | % | yes |
 | `mem_pct` | Memory % | metric | % | yes |
 | `uptime` | Uptime | metric | sec | yes |
-| `num_sta` | Connected Clients | metric | — | yes |
+| `num_sta` | Connected Clients | metric | - | yes |
 | `satisfaction` | Satisfaction | metric | % | yes |
 
 #### Status
 
 | Key | Label | Type | Unit | Monitored |
 |---|---|---|---|---|
-| `state` | State (1 = connected) | metric |  | yes |
+| `state` | State (1 = connected) | metric | - | yes |
 
 #### Configuration
 
 | Key | Label | Type | Unit | Monitored |
 |---|---|---|---|---|
-| `model` | Model | property | — | — |
-| `firmware` | Firmware | property | — | — |
-| `serial` | Serial Number | property | — | — |
-| `ip` | IP Address | property | — | — |
-| `mac_address` | MAC Address | property | — | — |
-| `name` | Name | property | — | — |
+| `model` | Model | property | - | - |
+| `firmware` | Firmware | property | - | - |
+| `serial` | Serial Number | property | - | - |
+| `ip` | IP Address | property | - | - |
+| `mac_address` | MAC Address | property | - | - |
+| `name` | Name | property | - | - |
 
 ---
 
@@ -281,7 +281,7 @@ Generated from `describe.xml` and `resources.properties` for build 1.0.0.4.
 
 | Key | Label | Type | Unit | Monitored |
 |---|---|---|---|---|
-| `channel` | Channel | metric | — | yes |
+| `channel` | Channel | metric | - | yes |
 | `tx_power` | TX Power | metric | dBm | yes |
 | `cu_total` | Channel Utilization | metric | % | yes |
 | `satisfaction` | Satisfaction | metric | % | yes |
@@ -291,7 +291,7 @@ Generated from `describe.xml` and `resources.properties` for build 1.0.0.4.
 
 | Key | Label | Type | Unit | Monitored |
 |---|---|---|---|---|
-| `user_num_sta` | Client Count | metric | — | yes |
+| `user_num_sta` | Client Count | metric | - | yes |
 
 #### Traffic
 
@@ -302,15 +302,21 @@ Generated from `describe.xml` and `resources.properties` for build 1.0.0.4.
 | `tx_rate` | TX Rate | metric | bytes/s | yes |
 | `rx_rate` | RX Rate | metric | bytes/s | yes |
 
+> `tx_rate` / `rx_rate` on the radio are read from the access point's
+> `stat.ap.<radio name>-tx_bytes-r` / `-rx_bytes-r`. That field is not yet
+> confirmed on a live controller (build 15); when the access point does not
+> report it, the radio publishes no rate. The switch port and WAN rate
+> fields are recorded on a live controller.
+
 #### Configuration
 
 | Key | Label | Type | Unit | Monitored |
 |---|---|---|---|---|
-| `radio_type` | Radio Type | property | — | — |
-| `radio_name` | Radio Name | property | — | — |
-| `ht` | HT Mode | property | — | — |
-| `min_txpower` | Min TX Power | property | — | — |
-| `max_txpower` | Max TX Power | property | — | — |
+| `radio_type` | Radio Type | property | - | - |
+| `radio_name` | Radio Name | property | - | - |
+| `ht` | HT Mode | property | - | - |
+| `min_txpower` | Min TX Power | property | - | - |
+| `max_txpower` | Max TX Power | property | - | - |
 
 ---
 
@@ -322,16 +328,16 @@ Generated from `describe.xml` and `resources.properties` for build 1.0.0.4.
 
 | Key | Label | Type | Unit | Monitored |
 |---|---|---|---|---|
-| `num_user` | Users | metric | — | yes |
-| `num_guest` | Guests | metric | — | yes |
-| `num_iot` | IoT Devices | metric | — | yes |
-| `num_disconnected` | Disconnected | metric | — | yes |
+| `num_user` | Users | metric | - | yes |
+| `num_guest` | Guests | metric | - | yes |
+| `num_iot` | IoT Devices | metric | - | yes |
+| `num_disconnected` | Disconnected | metric | - | yes |
 
 #### Performance
 
 | Key | Label | Type | Unit | Monitored |
 |---|---|---|---|---|
-| `num_ap` | AP Count | metric | — | yes |
+| `num_ap` | AP Count | metric | - | yes |
 | `tx_bytes_r` | TX Rate | metric | bytes/s | yes |
 | `rx_bytes_r` | RX Rate | metric | bytes/s | yes |
 
@@ -359,12 +365,12 @@ Generated from `describe.xml` and `resources.properties` for build 1.0.0.4.
 
 | Key | Label | Type | Unit | Monitored |
 |---|---|---|---|---|
-| `model` | Model | property | — | — |
-| `firmware` | Firmware | property | — | — |
-| `name` | Name | property | — | — |
-| `host_type` | Host Type | property | — | — |
-| `recording_retention_days` | Recording Retention (days) | property (numeric) |  |  |
-| `camera_count` | Camera Count | property | — | — |
+| `model` | Model | property | - | - |
+| `firmware` | Firmware | property | - | - |
+| `name` | Name | property | - | - |
+| `host_type` | Host Type | property | - | - |
+| `recording_retention_days` | Recording Retention (days) | property (numeric) | - | - |
+| `camera_count` | Camera Count | property | - | - |
 
 ---
 
@@ -378,26 +384,26 @@ Generated from `describe.xml` and `resources.properties` for build 1.0.0.4.
 |---|---|---|---|---|
 | `uptime` | Uptime | metric | sec | yes |
 | `seconds_since_last_motion` | Seconds Since Last Motion | metric | sec | no |
-| `state` | State | property | — | — |
-| `is_connected` | Connected | property | — | — |
-| `is_recording` | Recording | property | — | — |
+| `state` | State | property | - | - |
+| `is_connected` | Connected | property | - | - |
+| `is_recording` | Recording | property | - | - |
 
 #### Hardware
 
 | Key | Label | Type | Unit | Monitored |
 |---|---|---|---|---|
-| `model` | Model | property | — | — |
-| `firmware` | Firmware | property | — | — |
-| `type` | Type | property | — | — |
-| `is_wireless` | Wireless | property | — | — |
-| `phy_rate` | PHY Rate | property | — | — |
+| `model` | Model | property | - | - |
+| `firmware` | Firmware | property | - | - |
+| `type` | Type | property | - | - |
+| `is_wireless` | Wireless | property | - | - |
+| `phy_rate` | PHY Rate | property | - | - |
 
 #### Network
 
 | Key | Label | Type | Unit | Monitored |
 |---|---|---|---|---|
-| `ip` | IP Address | property | — | — |
-| `mac_address` | MAC Address | property | — | — |
+| `ip` | IP Address | property | - | - |
+| `mac_address` | MAC Address | property | - | - |
 
 ---
 

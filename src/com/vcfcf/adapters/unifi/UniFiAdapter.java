@@ -935,8 +935,12 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		// Build 15 (issue #14): none of the WAN's metrics while its gateway
 		// is disconnected; otherwise each only when present.
 		if (UniFiValues.publishesPerformance(deviceConnected(dev))) {
+			// Cumulative counters (build 15, issue #16: unit bytes, was
+			// declared bytes/s) and UniFi's own rates (issue #29).
 			metricIfPresent(out, "Traffic|tx_bytes", wan.get("tx_bytes"));
 			metricIfPresent(out, "Traffic|rx_bytes", wan.get("rx_bytes"));
+			metricIfPresent(out, "Traffic|tx_rate", wan.get("tx_bytes-r"));
+			metricIfPresent(out, "Traffic|rx_rate", wan.get("rx_bytes-r"));
 			metricIfPresent(out, "Health|latency", wan.get("latency"));
 			metricIfPresent(out, "Health|availability", wan.get("availability"));
 			metricIfPresent(out, "Health|speed", wan.get("speed"));
@@ -1043,6 +1047,9 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		if (perf) {
 			metricIfPresent(out, "Traffic|tx_bytes", port.get("tx_bytes"));
 			metricIfPresent(out, "Traffic|rx_bytes", port.get("rx_bytes"));
+			// Build 15 (issue #29): UniFi's own rates next to the counters.
+			metricIfPresent(out, "Traffic|tx_rate", port.get("tx_bytes-r"));
+			metricIfPresent(out, "Traffic|rx_rate", port.get("rx_bytes-r"));
 			metricIfPresent(out, "Traffic|tx_errors", port.get("tx_errors"));
 			metricIfPresent(out, "Traffic|rx_errors", port.get("rx_errors"));
 
@@ -1164,6 +1171,13 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 					statAp.get(radioName + "-tx_bytes"));
 			metricIfPresent(out, "Traffic|rx_bytes",
 					statAp.get(radioName + "-rx_bytes"));
+			// Build 15 (issue #29): the radio's rate, next to its counters,
+			// when the access point reports one (key unproven on a live
+			// controller; nothing is published when it is absent).
+			metricIfPresent(out, "Traffic|tx_rate",
+					statAp.get(radioName + "-tx_bytes-r"));
+			metricIfPresent(out, "Traffic|rx_rate",
+					statAp.get(radioName + "-rx_bytes-r"));
 		}
 
 		prop(out, "Configuration|radio_type", radioCode);

@@ -111,9 +111,15 @@
 			<ResourceIdentifier key="wan_name" nameKey="61" type="string" required="true" dispOrder="1"/>
 
 			<ResourceGroup key="Traffic" nameKey="62" instanced="false">
+				<!-- Build 15 (issue #16): cumulative counters, not rates (were bytes/s). -->
 				<ResourceAttribute key="tx_bytes" nameKey="63" dataType="float"
-				                   isProperty="false" defaultMonitored="true" unit="bytes/s"/>
+				                   isProperty="false" defaultMonitored="true" unit="bytes"/>
 				<ResourceAttribute key="rx_bytes" nameKey="64" dataType="float"
+				                   isProperty="false" defaultMonitored="true" unit="bytes"/>
+				<!-- Build 15 (issue #29): UniFi's own rate fields (tx_bytes-r / rx_bytes-r). -->
+				<ResourceAttribute key="tx_rate" nameKey="75" dataType="float"
+				                   isProperty="false" defaultMonitored="true" unit="bytes/s"/>
+				<ResourceAttribute key="rx_rate" nameKey="76" dataType="float"
 				                   isProperty="false" defaultMonitored="true" unit="bytes/s"/>
 			</ResourceGroup>
 
@@ -197,6 +203,11 @@
 				                   isProperty="false" defaultMonitored="true"/>
 				<ResourceAttribute key="rx_errors" nameKey="116" dataType="float"
 				                   isProperty="false" defaultMonitored="true"/>
+				<!-- Build 15 (issue #29): UniFi's own rate fields (tx_bytes-r / rx_bytes-r). -->
+				<ResourceAttribute key="tx_rate" nameKey="137" dataType="float"
+				                   isProperty="false" defaultMonitored="true" unit="bytes/s"/>
+				<ResourceAttribute key="rx_rate" nameKey="138" dataType="float"
+				                   isProperty="false" defaultMonitored="true" unit="bytes/s"/>
 			</ResourceGroup>
 
 			<ResourceGroup key="Status" nameKey="117" instanced="false">
@@ -295,6 +306,11 @@
 				                   isProperty="false" defaultMonitored="true" unit="bytes"/>
 				<ResourceAttribute key="rx_bytes" nameKey="192" dataType="float"
 				                   isProperty="false" defaultMonitored="true" unit="bytes"/>
+				<!-- Build 15 (issue #29): UniFi's own rate fields (tx_bytes-r / rx_bytes-r). -->
+				<ResourceAttribute key="tx_rate" nameKey="199" dataType="float"
+				                   isProperty="false" defaultMonitored="true" unit="bytes/s"/>
+				<ResourceAttribute key="rx_rate" nameKey="200" dataType="float"
+				                   isProperty="false" defaultMonitored="true" unit="bytes/s"/>
 			</ResourceGroup>
 
 			<ResourceGroup key="Configuration" nameKey="193" instanced="false">

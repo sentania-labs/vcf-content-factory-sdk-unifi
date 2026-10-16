@@ -202,6 +202,9 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		final SiteReads.Cooldowns siteCooldowns;
 		// Build 15 (issue #21): the host list is fetched at most every
 		// SLOW_REFRESH_MS. The Protect bootstrap has no cache (every cycle).
+		// Build 15 (peer review 4): stat/sysinfo back-off after a refusal.
+		final SysinfoGate sysinfoGate = new SysinfoGate(
+				System::currentTimeMillis, AUTH_FAILURE_BACKOFF_MS);
 		final RefreshCache<List<UniFiStitcher.ForeignHost>> vmnicHosts =
 				new RefreshCache<>(System::currentTimeMillis, SLOW_REFRESH_MS,
 						SLOW_MAX_STALE_MS);
@@ -888,7 +891,7 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		// Build 15 (issue #18): version (Network application) and timezone
 		// from stat/sysinfo, each published only when the controller sent
 		// it; absent when sysinfo could not be read this cycle.
-		SimpleJson info = s.sysinfoForSite(siteName);
+		SimpleJson info = s.sysinfo(); // the controller's (peer review 4)
 		if (info != null) {
 			String version = info.get("version").asString("");
 			if (!version.isEmpty()) prop(out, "Configuration|version", version);
@@ -1637,9 +1640,10 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		SimpleJson sites;
 		final Map<String, SimpleJson> devicesBySite = new HashMap<>();
 		final Map<String, SimpleJson> healthBySite = new HashMap<>();
-		// Build 15 (issue #18): stat/sysinfo data[0] per site; absent when
+		// Build 15 (issue #18, peer review 4): stat/sysinfo data[0], read
+		// once per build for the controller; null when not read or when
 		// the call failed or carried no record.
-		final Map<String, SimpleJson> sysinfoBySite = new HashMap<>();
+		SimpleJson sysinfo;
 		SimpleJson protect; // nullable — Protect optional
 
 		// Build 14 (issue #19): sites whose stat/device failed this cycle,
@@ -1744,21 +1748,31 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 					adapter.logWarn("Snapshot: stat/health failed for site "
 							+ siteName + ": " + e.getMessage());
 				}
-				// Build 15 (issue #18): optional, for the site's version and
-				// timezone properties only. A failure costs those two
-				// properties this cycle (INFO), nothing else. Review W3: that
-				// a View Only account may read stat/sysinfo is to be
-				// confirmed on devel (a refusal costs a re-login and this
-				// INFO line per cycle).
+			}
+
+			// Build 15 (issue #18, peer review 4): stat/sysinfo once per
+			// build, through the first site read this build (it describes
+			// the controller, not the site), for every site's Version and
+			// Timezone properties only. A failure costs those properties,
+			// nothing else; after a 401, 403 or 429 it is not asked again for
+			// 15 minutes (SysinfoGate), so a refusing account (View Only is
+			// to be confirmed on devel, review W3) does not cost one extra
+			// login per cycle.
+			String sysinfoSite = null;
+			for (String siteName : siteNames) {
+				if (s.devicesBySite.containsKey(siteName)) {
+					sysinfoSite = siteName;
+					break;
+				}
+			}
+			if (sysinfoSite != null && c.sysinfoGate.shouldAsk(adapter::logInfo)) {
 				try {
-					SimpleJson info = api.statSysinfo(siteName).get("data").get(0);
-					if (info.isObject()) s.sysinfoBySite.put(siteName, info);
+					SimpleJson info = api.statSysinfo(sysinfoSite).get("data").get(0);
+					if (info.isObject()) s.sysinfo = info;
 				} catch (InterruptedException e) {
 					throw e; // review N4: Stop Collecting reaches the framework
 				} catch (Exception e) {
-					adapter.logInfo("Snapshot: stat/sysinfo not available for "
-							+ "site " + siteName + " (version and timezone "
-							+ "not published): " + e.getMessage());
+					c.sysinfoGate.failed(e, adapter::logWarn, adapter::logInfo);
 				}
 			}
 
@@ -1844,8 +1858,8 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		}
 
 		/** Build 15 (issue #18): stat/sysinfo data[0], or null. */
-		SimpleJson sysinfoForSite(String siteName) {
-			return sysinfoBySite.get(siteName);
+		SimpleJson sysinfo() {
+			return sysinfo;
 		}
 
 		SimpleJson findSite(String siteName) {

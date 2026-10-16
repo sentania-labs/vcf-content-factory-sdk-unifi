@@ -46,8 +46,15 @@ def main():
             f"{key} missing from describe.xml"
     assert 'sitePath(site, "stat/sysinfo")' in CLIENT, "no stat/sysinfo call"
     build = method_body("Snapshot", "build")
-    assert "api.statSysinfo(siteName)" in build, "sysinfo not read per site"
-    sys_try = build[build.index("api.statSysinfo(siteName)"):]
+    # Peer review 4: once per build, through the gate, outside the site loop.
+    assert build.count("api.statSysinfo(") == 1, "sysinfo asked more than once"
+    assert "api.statSysinfo(sysinfoSite)" in build, "sysinfo not read once per build"
+    assert "c.sysinfoGate.shouldAsk(" in build and "c.sysinfoGate.failed(" in build, \
+        "a refused sysinfo is asked again every cycle"
+    loop = build[build.index("for (String siteName : siteNames) {"):build.index("String sysinfoSite")]
+    assert "statSysinfo" not in loop, "sysinfo is still asked per site"
+    assert "s.sysinfo()" in site and "sysinfoForSite" not in SRC
+    sys_try = build[build.index("api.statSysinfo(sysinfoSite)"):]
     sys_try = sys_try[:sys_try.index("catch (Exception e)")]
     assert re.search(r"catch \(InterruptedException e\) \{\s*throw e;", sys_try), \
         "the sysinfo catch swallows an interrupt (review N4)"

@@ -32,9 +32,11 @@ pack only:
   stored password leaks. **To be confirmed on devel:** that a View Only
   account can read everything the pack reads, including `stat/sysinfo`
   (the site's Version and Timezone, build 15) and the Protect bootstrap.
-  If a call is refused, the pack still collects the rest, but each
-  refused call costs a re-login per cycle; use an account with read
-  access to that application until this is confirmed.
+  If a call is refused, the pack still collects the rest. A refused
+  `stat/sysinfo` is not asked again for 15 minutes (one WARN), so it
+  costs at most one extra login per 15 minutes; a refused Protect read
+  costs a re-login per cycle, so use an account with read access to
+  Protect until this is confirmed.
 - **A dedicated account**, so a password change or lockout of a person's
   account does not stop collection, and the controller's logs show the
   adapter's logins under its own name.
@@ -42,8 +44,8 @@ pack only:
 ## Permissions Required
 
 The controller account needs read access to the Network API (sites,
-devices, ports, radios, statistics, and since build 15 the per-site
-`stat/sysinfo` controller information; that a View Only account may read
+devices, ports, radios, statistics, and since build 15 the
+`stat/sysinfo` controller information, read once per cycle; that a View Only account may read
 it is to be confirmed on devel) and, for camera monitoring, read access to
 the Protect API (NVR and camera state). A read-capable account is
 sufficient — the adapter only reads; it makes no configuration changes on

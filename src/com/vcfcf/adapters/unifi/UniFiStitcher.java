@@ -130,10 +130,20 @@ public final class UniFiStitcher {
 				+ "&pageSize=10000");
 		SimpleJson parsed = SimpleJson.parse(body);
 		SimpleJson list = parsed == null ? null : parsed.get("resourceList");
-		// Peer review 2: no resourceList is a failed read (thrown, so the
-		// cache reuses its last good list), never an empty host list.
-		VmnicLldp.requireResourceList(parsed != null && parsed.isObject(),
-				list != null && list.isList());
+		// Peer review 2, review round 3: no resourceList is a failed read
+		// (thrown, so the cache reuses its last good list) unless
+		// pageInfo.totalCount is 0, a genuinely empty host list.
+		SimpleJson total = parsed == null ? null
+				: parsed.get("pageInfo").get("totalCount");
+		Long totalCount = total == null || total.isNull()
+				|| UniFiValues.number(total.asString()) == null ? null
+				: UniFiValues.number(total.asString()).longValue();
+		if (!VmnicLldp.hostListPresent(parsed != null && parsed.isObject(),
+				list != null && list.isList(), totalCount)) {
+			logger.info("vmnic stitch: the Suite API lists no HostSystem "
+					+ "(totalCount 0); nothing to stitch");
+			return out;
+		}
 
 		for (SimpleJson r : list.asList()) {
 			if (r == null || r.isNull()) continue;

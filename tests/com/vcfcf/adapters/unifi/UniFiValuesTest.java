@@ -71,6 +71,18 @@ public final class UniFiValuesTest {
 				"peer review 5: an upgrading device still publishes its metrics");
 		T.check(UniFiValues.publishesPerformance("5"), "provisioning publishes");
 		T.check(UniFiValues.publishesPerformance("7"), "adopting publishes");
+		// Review round 3: an allow-list. Pin the set and every skip.
+		T.eq(new java.util.HashSet<>(java.util.Arrays.asList(1, 4, 5, 7)),
+				UniFiValues.INFORMING_STATES, "the informing states");
+		for (String code : new String[]{"0", "2", "3", "6", "8", "9", "10",
+				"11", "12", "-1", "99"}) {
+			T.check(!UniFiValues.publishesPerformance(code),
+					"state " + code + " skips metrics");
+		}
+		for (String code : new String[]{"1", "4", "5", "7", "4.0"}) {
+			T.check(UniFiValues.publishesPerformance(code),
+					"state " + code + " publishes");
+		}
 		T.check(UniFiValues.publishesPerformance(null),
 				"unknown: present fields only");
 		T.check(UniFiValues.publishesPerformance("CONNECTED"),

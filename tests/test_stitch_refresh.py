@@ -41,7 +41,7 @@ def main():
     assert "if (perHost.contains(h.identifier)) {" in ST
     assert "getOrDefault(h.identifier" not in ST, \
         "an omitted host defaults to no neighbours"
-    assert "VmnicLldp.requireResourceList(" in ST, \
+    assert "VmnicLldp.hostListPresent(" in ST and '"totalCount"' in ST, \
         "a Call A answer without resourceList is cached as an empty host list"
     assert "if (list == null || !list.isList()) return out;" not in ST
     assert "unread == pending.size()" in ST, \

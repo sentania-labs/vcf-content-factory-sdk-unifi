@@ -66,17 +66,30 @@ final class UniFiValues {
 	}
 
 	/**
+	 * The states in which a device is informing the controller, so its
+	 * values are current: connected (1), upgrading (4), provisioning (5),
+	 * adopting (7). Review round 3: an allow-list, so a code not listed
+	 * (0 disconnected, 2 pending adoption, 6 heartbeat missed, 9 inform
+	 * error, and any code this pack does not know, such as 10 or 11) skips
+	 * the metrics instead of republishing stored values. Code meanings:
+	 * see docs/overview.md "Device state codes" (community-sourced except
+	 * 0 and 1).
+	 */
+	static final java.util.Set<Integer> INFORMING_STATES =
+			java.util.Collections.unmodifiableSet(new java.util.HashSet<>(
+					java.util.Arrays.asList(1, 4, 5, 7)));
+
+	/**
 	 * Whether a device's performance metrics (and those of its ports, radios
-	 * and WAN interfaces) are published, from its raw {@code state}. Not
-	 * when it is disconnected (0) or its heartbeat is missed (6): the
-	 * controller then reports its last values or none. Every other state,
-	 * upgrading (4), provisioning (5), adopting (7) and the rest, publishes
-	 * what is present (peer review 5: an upgrading AP still reports real
-	 * values). An unknown state publishes what is present.
+	 * and WAN interfaces) are published, from its raw {@code state}: only
+	 * in an {@link #INFORMING_STATES} state. In any other state the
+	 * controller holds last values or none, so nothing is published. An
+	 * absent state (or one that is not a whole number) is unknown and
+	 * publishes what is present, as before.
 	 */
 	static boolean publishesPerformance(String rawState) {
 		Integer code = stateCode(rawState);
-		return code == null || (code != 0 && code != 6);
+		return code == null || INFORMING_STATES.contains(code);
 	}
 
 	/**

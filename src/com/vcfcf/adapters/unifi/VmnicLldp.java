@@ -62,16 +62,24 @@ final class VmnicLldp {
 	}
 
 	/**
-	 * Peer review 2: Call A must carry a {@code resourceList} list. An
-	 * answer without one (unparseable, an error body) is a failed read, not
-	 * "no hosts", so the caller's cache keeps its last good host list.
+	 * Peer review 2, review round 3: whether Call A's answer has hosts to
+	 * walk. {@code true} with a {@code resourceList} list; {@code false}
+	 * when it has none and {@code pageInfo.totalCount} is 0, a genuinely
+	 * empty list (an instance with no ESXi hosts), as compliance's
+	 * {@code ComplianceDecisions.resourcePageOutcome} treats it. Any other
+	 * answer without a list (totalCount above 0 or absent, unparseable, an
+	 * error body) is a failed read, so the caller's cache keeps its last
+	 * good host list.
+	 *
+	 * @param totalCount {@code pageInfo.totalCount}, null when absent
 	 */
-	static void requireResourceList(boolean answerIsObject, boolean hasList)
-			throws java.io.IOException {
-		if (!answerIsObject || !hasList) {
-			throw new java.io.IOException("vmnic stitch: the HostSystem list "
-					+ "answer carries no resourceList; treating it as unread");
-		}
+	static boolean hostListPresent(boolean answerIsObject, boolean hasList,
+			Long totalCount) throws java.io.IOException {
+		if (answerIsObject && hasList) return true;
+		if (answerIsObject && totalCount != null && totalCount == 0) return false;
+		throw new java.io.IOException("vmnic stitch: the HostSystem list "
+				+ "answer carries no resourceList (totalCount="
+				+ totalCount + "); treating it as unread");
 	}
 
 	/** The ids each path from {@link #bulkPropertiesPaths} asks for, in order. */

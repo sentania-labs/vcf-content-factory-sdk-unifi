@@ -139,15 +139,15 @@ logged at debug only, never WARN spam.
   published only when the controller sends its field as a number; before
   build 15 a missing field was published as 0 (0% CPU, 0 clients, 0
   satisfaction). A satisfaction of -1, UniFi's "no data", is not
-  published. A gateway, switch or access point that is disconnected or
-  whose heartbeat is missed (`Status|state_code` disconnected or heartbeat
-  missed) publishes `Status|state` = 0 and its properties, and no metrics;
-  its switch ports, radios and WAN interfaces publish no metrics either. So
-  a blank stretch on a device's CPU or traffic chart, with that state code,
-  means the device was offline, not that collection broke. A device in any
-  other state that is not connected (upgrading, provisioning, adopting and
-  so on) reads 0 on `Status|state` but keeps publishing the metrics it
-  reports. A device
+  published. A gateway, switch or access point that is not informing the
+  controller (any state other than connected, upgrading, provisioning or
+  adopting; see Device state codes below) publishes `Status|state` = 0,
+  its state code and its properties, and no metrics; its switch ports,
+  radios and WAN interfaces publish no metrics either. So a blank stretch
+  on a device's CPU or traffic chart, with such a state code, means the
+  device was not reporting, not that collection broke. An upgrading,
+  provisioning or adopting device reads 0 on `Status|state` but keeps
+  publishing the metrics it reports. A device
   whose state is not reported publishes no state and the metrics it does
   report. Views, super metrics and averages that used to count those zeros
   read differently from build 15 (averages that included offline zeros
@@ -240,6 +240,33 @@ logged at debug only, never WARN spam.
   enumerates its topology on the collect path (`discoverOnCollect()`), so a
   freshly created instance populates on its first collection cycle rather
   than waiting on a discovery task the platform may never invoke.
+
+### Device state codes
+
+The UniFi device `state` field (`stat/device`), as this pack reads it for
+`Status|state`, `Status|state_code` and whether metrics are published:
+
+| Code | `Status|state_code` | `Status|state` | Metrics published |
+|---|---|---|---|
+| 0 | disconnected | 0 | no |
+| 1 | connected | 1 | yes |
+| 2 | pending adoption | 0 | no |
+| 4 | upgrading | 0 | yes |
+| 5 | provisioning | 0 | yes |
+| 6 | heartbeat missed | 0 | no |
+| 7 | adopting | 0 | yes |
+| 9 | inform error | 0 | no |
+| any other | the number | 0 | no |
+| absent or not a whole number | (not published) | (not published) | yes, fields present |
+
+Source: codes 1 and 0 are recorded on the factory's lab controller
+(`knowledge/context/api-maps/unifi-network-api.md`, `stat_device.state`,
+"1=connected, 0=disconnected"; only 1 was observed). The other names are
+community-sourced (the device state values used by open-source UniFi
+clients) and not yet seen on a live controller; confirm on devel. Metrics
+publish only while the device is informing the controller (1, 4, 5, 7):
+in any other state the controller holds last values, which would
+otherwise publish as current.
 
 ## Known Limitations
 

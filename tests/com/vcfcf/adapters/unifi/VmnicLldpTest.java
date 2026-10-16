@@ -12,7 +12,7 @@ import java.util.List;
  */
 public final class VmnicLldpTest {
 
-	public static void main(String[] args) {
+	public static void main(String[] args) throws Exception {
 		bulkPaths();
 		extraction();
 		missingFromAnswer();
@@ -50,21 +50,25 @@ public final class VmnicLldpTest {
 				new java.util.HashSet<>(asked)), "all answered");
 	}
 
-	/** Peer review 2: no resourceList is a failed read, not an empty list. */
-	static void hostListRequired() {
-		for (boolean[] c : new boolean[][]{{false, false}, {true, false}, {false, true}}) {
+	/**
+	 * Peer review 2, review round 3: no resourceList fails the refresh
+	 * unless totalCount is 0 (a genuinely empty list).
+	 */
+	static void hostListRequired() throws Exception {
+		T.check(VmnicLldp.hostListPresent(true, true, null), "a list, no pageInfo");
+		T.check(VmnicLldp.hostListPresent(true, true, 3L), "a list with a count");
+		T.check(!VmnicLldp.hostListPresent(true, false, 0L),
+				"no list and totalCount 0: empty, not a failure");
+		Object[][] fail = {{true, false, null}, {true, false, 5L},
+				{false, false, 0L}, {false, true, null}};
+		for (Object[] c : fail) {
 			try {
-				VmnicLldp.requireResourceList(c[0], c[1]);
-				throw new AssertionError("must throw for " + c[0] + "/" + c[1]);
+				VmnicLldp.hostListPresent((Boolean) c[0], (Boolean) c[1], (Long) c[2]);
+				throw new AssertionError("must fail for " + java.util.Arrays.toString(c));
 			} catch (java.io.IOException expected) {
 				T.check(expected.getMessage().contains("resourceList"),
 						expected.getMessage());
 			}
-		}
-		try {
-			VmnicLldp.requireResourceList(true, true);
-		} catch (java.io.IOException e) {
-			throw new AssertionError("a real list must pass", e);
 		}
 	}
 

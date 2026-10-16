@@ -180,16 +180,19 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		final HttpClients clients;
 		final Logger apiLog;
 		final Logger snapshotLog;
+		final Logger inventoryLog;
 		final SnapshotCache<Snapshot> snapshots;
 		final SiteReads.Cooldowns siteCooldowns;
 
 		Configured(UniFiApiClient api, HttpClients clients, Logger apiLog,
-				Logger snapshotLog, SnapshotCache<Snapshot> snapshots,
+				Logger snapshotLog, Logger inventoryLog,
+				SnapshotCache<Snapshot> snapshots,
 				SiteReads.Cooldowns siteCooldowns) {
 			this.api = api;
 			this.clients = clients;
 			this.apiLog = apiLog;
 			this.snapshotLog = snapshotLog;
+			this.inventoryLog = inventoryLog;
 			this.snapshots = snapshots;
 			this.siteCooldowns = siteCooldowns;
 		}
@@ -259,6 +262,9 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		// Configured; build 15, issue #34 for the API client's logger).
 		Logger apiLog = componentLogger(UniFiApiClient.class);
 		Logger snapshotLog = componentLogger(SnapshotCache.class);
+		// Build 15 (issue #23): DEBUG lines for devices, ports and cameras
+		// skipped for having no identity.
+		Logger inventoryLog = componentLogger(UniFiIds.class);
 		HttpClients clients = buildHttpClient(cfg, apiLog);
 		this.httpClient = clients.main;
 		this.configured = new Configured(
@@ -266,6 +272,7 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 				clients,
 				apiLog,
 				snapshotLog,
+				inventoryLog,
 				new SnapshotCache<>(System::currentTimeMillis,
 						MAX_SNAPSHOT_AGE_MS, FAILURE_RETRY_BACKOFF_MS,
 						AUTH_FAILURE_BACKOFF_MS, snapshotLog::debug),
@@ -517,7 +524,11 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 
 			for (SimpleJson dev : s.devicesForSite(siteName).get("data").asList()) {
 				String type = dev.get("type").asString("");
-				String mac = dev.get("mac").asString();
+				// Build 15 (issue #23): no MAC, no identity; skipped here,
+				// in buildRelationships and in the snapshot index alike
+				// (Snapshot.build logs it at DEBUG).
+				String mac = deviceMac(dev);
+				if (mac == null) continue;
 				String name = deviceDisplayName(dev);
 
 				if (isGateway(type)) {
@@ -539,7 +550,8 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 					SimpleJson portTable = dev.get("port_table");
 					if (!portTable.isNull()) {
 						for (SimpleJson port : portTable.asList()) {
-							int idx = (int) port.get("port_idx").asLong();
+							Integer idx = portIdx(port);
+							if (idx == null) continue; // #23: never <mac>_0
 							sink.accept(rcOf("UniFiSwitchPort",
 									portDisplayName(port, idx),
 									"port_key", mac + "_" + idx));
@@ -577,7 +589,8 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 				SimpleJson cams = s.protect.get("cameras");
 				if (!cams.isNull()) {
 					for (SimpleJson cam : cams.asList()) {
-						String camMac = cam.get("mac").asString();
+						String camMac = UniFiIds.mac(cam.get("mac").asString());
+						if (camMac == null) continue; // #23
 						sink.accept(rcOf("UniFiCamera",
 								cam.get("name").asString(camMac),
 								"camera_mac", camMac));
@@ -697,7 +710,8 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 					+ "configured");
 		}
 		return c.snapshots.get(
-				() -> Snapshot.build(c.api, c.siteCooldowns, this),
+				() -> Snapshot.build(c.api, c.siteCooldowns, c.inventoryLog,
+						this),
 				this::logWarn);
 	}
 
@@ -1186,7 +1200,8 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 
 			for (SimpleJson dev : devices.get("data").asList()) {
 				String type = dev.get("type").asString("");
-				String mac = dev.get("mac").asString();
+				String mac = deviceMac(dev);
+				if (mac == null) continue; // build 15, issue #23
 				String name = deviceDisplayName(dev);
 				ResourceKey devKey;
 
@@ -1205,7 +1220,8 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 					SimpleJson ports = dev.get("port_table");
 					if (!ports.isNull()) {
 						for (SimpleJson port : ports.asList()) {
-							int idx = (int) port.get("port_idx").asLong();
+							Integer idx = portIdx(port);
+							if (idx == null) continue; // build 15, issue #23
 							rb.parent(devKey, rb.resource("UniFiSwitchPort",
 									portDisplayName(port, idx),
 									"port_key", mac + "_" + idx));
@@ -1229,7 +1245,8 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 
 			// Wire device topology by uplink_mac; no uplink → direct child of site.
 			for (SimpleJson dev : devices.get("data").asList()) {
-				String mac = dev.get("mac").asString();
+				String mac = deviceMac(dev);
+				if (mac == null) continue; // build 15, issue #23
 				ResourceKey devKey = deviceByMac.get(mac);
 				if (devKey == null) continue;
 				String uplinkMac = dev.get("uplink").get("uplink_mac").asString("");
@@ -1269,7 +1286,8 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 				SimpleJson cameras = s.protect.get("cameras");
 				if (!cameras.isNull()) {
 					for (SimpleJson cam : cameras.asList()) {
-						String camMac = cam.get("mac").asString();
+						String camMac = UniFiIds.mac(cam.get("mac").asString());
+						if (camMac == null) continue; // build 15, issue #23
 						rb.parent(nvrKey, rb.resource("UniFiCamera",
 								cam.get("name").asString(camMac),
 								"camera_mac", camMac));
@@ -1331,6 +1349,16 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		return "udm".equals(type) || "ugw".equals(type) || "uxg".equals(type);
 	}
 
+	/** Build 15 (issue #23): the device MAC, or null when it has none. */
+	private static String deviceMac(SimpleJson dev) {
+		return UniFiIds.mac(dev.get("mac").asString());
+	}
+
+	/** Build 15 (issue #23): the port index, or null when it has none. */
+	private static Integer portIdx(SimpleJson port) {
+		return UniFiIds.portIdx(port.get("port_idx").asString());
+	}
+
 	private static String deviceDisplayName(SimpleJson dev) {
 		String name = dev.get("name").asString("");
 		if (!name.isEmpty()) return name;
@@ -1360,7 +1388,9 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		SimpleJson ports = dev.get("port_table");
 		if (ports.isNull()) return null;
 		for (SimpleJson port : ports.asList()) {
-			if ((int) port.get("port_idx").asLong() == idx) return port;
+			// Build 15 (issue #23): a port with no port_idx is never port 0.
+			Integer portIdx = portIdx(port);
+			if (portIdx != null && portIdx == idx) return port;
 		}
 		return null;
 	}
@@ -1474,8 +1504,8 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		int vmnicConflictedCount;
 
 		static Snapshot build(UniFiApiClient api,
-				SiteReads.Cooldowns siteCooldowns, UniFiAdapter adapter)
-				throws Exception {
+				SiteReads.Cooldowns siteCooldowns, Logger inventoryLog,
+				UniFiAdapter adapter) throws Exception {
 			Snapshot s = new Snapshot();
 			s.sites = api.listSites();
 
@@ -1506,6 +1536,8 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 			s.failedSites.putAll(deviceReads.failed);
 
 			int devTotal = 0;
+			// Build 15 (issue #23): no-identity records, skipped everywhere.
+			int skippedDevices = 0, skippedPorts = 0, skippedCameras = 0;
 			for (String siteName : siteNames) {
 				SimpleJson devices = deviceReads.bySite.get(siteName);
 				if (devices == null) {
@@ -1515,10 +1547,28 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 				SimpleJson devData = devices.get("data");
 				if (!devData.isNull() && devData.isList()) {
 					for (SimpleJson dev : devData.asList()) {
-						String mac = dev.get("mac").asString("");
-						if (!mac.isEmpty()) {
-							s.deviceByMac.put(mac, dev);
-							devTotal++;
+						String mac = deviceMac(dev);
+						if (mac == null) {
+							skippedDevices++;
+							debugQuietly(inventoryLog, "UniFi inventory: skipped a "
+									+ dev.get("type").asString("?") + " device on site "
+									+ siteName + " with no MAC (model="
+									+ dev.get("model").asString("?") + ", name="
+									+ dev.get("name").asString("") + ")");
+							continue;
+						}
+						s.deviceByMac.put(mac, dev);
+						devTotal++;
+						if ("usw".equals(dev.get("type").asString(""))) {
+							for (SimpleJson port : dev.get("port_table").asList()) {
+								if (portIdx(port) == null) {
+									skippedPorts++;
+									debugQuietly(inventoryLog, "UniFi inventory: "
+											+ "skipped a port with no port_idx on "
+											+ "switch " + mac + " (name="
+											+ port.get("name").asString("") + ")");
+								}
+							}
 						}
 					}
 				}
@@ -1550,8 +1600,15 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 					SimpleJson cams = protect.get("cameras");
 					if (!cams.isNull()) {
 						for (SimpleJson cam : cams.asList()) {
-							String mac = cam.get("mac").asString("");
-							if (!mac.isEmpty()) s.cameraByMac.put(mac, cam);
+							String mac = UniFiIds.mac(cam.get("mac").asString());
+							if (mac == null) {
+								skippedCameras++;
+								debugQuietly(inventoryLog, "UniFi inventory: "
+										+ "skipped a camera with no MAC (name="
+										+ cam.get("name").asString("") + ")");
+								continue;
+							}
+							s.cameraByMac.put(mac, cam);
 						}
 					}
 				}
@@ -1563,8 +1620,22 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 					+ devTotal + " devices / " + s.cameraByMac.size() + " cameras / "
 					+ "protect=" + (s.protect != null)
 					+ (s.failedSites.isEmpty() ? ""
-							: " / unreadable sites=" + s.failedSites.keySet()));
+							: " / unreadable sites=" + s.failedSites.keySet())
+					+ (skippedDevices + skippedPorts + skippedCameras == 0 ? ""
+							: " / skipped with no identity: " + skippedDevices
+									+ " devices, " + skippedPorts + " ports, "
+									+ skippedCameras + " cameras"));
 			return s;
+		}
+
+		/** A logger fault never reaches the snapshot build. */
+		private static void debugQuietly(Logger log, String message) {
+			if (log == null) return;
+			try {
+				log.debug(message);
+			} catch (RuntimeException ignored) {
+				// logging is best effort
+			}
 		}
 
 		/** Site names in /self/sites order. */
@@ -1808,12 +1879,14 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 			String siteName = site.get("name").asString();
 			for (SimpleJson dev : s.devicesForSite(siteName).get("data").asList()) {
 				if (!"usw".equals(dev.get("type").asString(""))) continue;
-				String switchMac = dev.get("mac").asString();
+				String switchMac = deviceMac(dev);
+				if (switchMac == null) continue; // build 15, issue #23
 				String devName = dev.get("name").asString("");
 				SimpleJson ports = dev.get("port_table");
 				if (ports.isNull()) continue;
 				for (SimpleJson port : ports.asList()) {
-					int idx2 = (int) port.get("port_idx").asLong();
+					Integer idx2 = portIdx(port);
+					if (idx2 == null) continue; // build 15, issue #23
 					String portKey = switchMac + "_" + idx2;
 					String portName = portDisplayName(port, idx2);
 					OwnPort candidate = new OwnPort(portKey, portName);

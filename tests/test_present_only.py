@@ -52,6 +52,21 @@ def main():
         assert "UniFiValues.publishesPerformance(deviceConnected(dev))" in body, \
             f"{name} publishes metrics while its device is disconnected"
 
+    # Peer review 3: the helpers themselves. The SimpleJson overload hands
+    # the field's text to UniFiValues.number (unit-tested: null when absent
+    # or not a number) and the Double overload publishes only a non-null.
+    helpers = re.findall(r"private static void metricIfPresent\(List<MetricData> out, "
+                         r"String key,\s*(SimpleJson field|Double value)\) \{(.*?)\n\t\}",
+                         SRC, re.S)
+    bodies = {sig: " ".join(body.split()) for sig, body in helpers}
+    assert bodies.get("SimpleJson field") == \
+        "metricIfPresent(out, key, UniFiValues.number(field.asString()));", \
+        f"metricIfPresent(SimpleJson) does not go through UniFiValues.number: {bodies}"
+    assert bodies.get("Double value") == "if (value != null) metric(out, key, value);", \
+        f"metricIfPresent(Double) publishes a null: {bodies}"
+    sat = method_body("void", "satisfactionIfPresent")
+    assert "UniFiValues.satisfaction(field.asString())" in sat and "asDouble" not in sat
+
     # Review N3: the switch PoE metrics are gated on the switch's state too.
     switch = method_body("void", "collectSwitch")
     assert 'if (perf) metricIfPresent(out, "PoE|total_max_power", maxPower);' in switch, \

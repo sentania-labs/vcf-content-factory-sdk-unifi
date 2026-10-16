@@ -62,11 +62,35 @@ public final class UniFiValuesTest {
 		T.eq(0.0, UniFiValues.stateMetric(Boolean.FALSE), "metric 0");
 		T.eq(null, UniFiValues.stateMetric(null), "no metric when unknown");
 
-		T.check(UniFiValues.publishesPerformance(Boolean.TRUE), "connected");
-		T.check(!UniFiValues.publishesPerformance(Boolean.FALSE),
+		T.check(UniFiValues.publishesPerformance("1"), "connected");
+		T.check(!UniFiValues.publishesPerformance("0"),
 				"disconnected: state only");
+		T.check(!UniFiValues.publishesPerformance("6"),
+				"heartbeat missed: state only");
+		T.check(UniFiValues.publishesPerformance("4"),
+				"peer review 5: an upgrading device still publishes its metrics");
+		T.check(UniFiValues.publishesPerformance("5"), "provisioning publishes");
+		T.check(UniFiValues.publishesPerformance("7"), "adopting publishes");
 		T.check(UniFiValues.publishesPerformance(null),
 				"unknown: present fields only");
+		T.check(UniFiValues.publishesPerformance("CONNECTED"),
+				"non-numeric: unknown, present fields only");
+
+		// Status|state stays 1/0 connected for an upgrading device.
+		T.eq(0.0, UniFiValues.stateMetric(UniFiValues.connected("4")),
+				"upgrading reads 0 on Status|state");
+		// Status|state_code names it.
+		String[][] names = {{"0", "disconnected"}, {"1", "connected"},
+				{"2", "pending adoption"}, {"4", "upgrading"},
+				{"5", "provisioning"}, {"6", "heartbeat missed"},
+				{"7", "adopting"}, {"9", "inform error"}, {"11", "11"},
+				{"3.0", "3"}};
+		for (String[] n : names) {
+			T.eq(n[1], UniFiValues.stateName(n[0]), "state_code for " + n[0]);
+		}
+		T.eq(null, UniFiValues.stateName(null), "absent: no state_code");
+		T.eq(null, UniFiValues.stateName("1.5"), "not a whole number");
+		T.eq(null, UniFiValues.stateName("x"), "not a number");
 	}
 
 	/** #16: an age in seconds, not the epoch value divided by 1000. */

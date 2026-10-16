@@ -49,7 +49,7 @@ def main():
         assert "publishState(out, dev)" in body, f"{name} does not publish state"
     for name in ("collectWanInterface", "collectSwitchPort", "collectRadio"):
         body = method_body("void", name)
-        assert "UniFiValues.publishesPerformance(deviceConnected(dev))" in body, \
+        assert "devicePerformance(dev)" in body, \
             f"{name} publishes metrics while its device is disconnected"
 
     # Peer review 3: the helpers themselves. The SimpleJson overload hands
@@ -82,7 +82,12 @@ def main():
     assert 'wired.get("phyRate").asString("")' in SRC, "phy_rate reads 0 when absent"
 
     state = method_body("boolean", "publishState")
-    assert '"Status|state"' in state and "stateMetric(connected)" in state
+    assert '"Status|state"' in state and "UniFiValues.connected(raw)" in state
+    assert 'prop(out, "Status|state_code", name)' in state, "no Status|state_code"
+    assert "return UniFiValues.publishesPerformance(raw);" in state, \
+        "performance gating does not use the raw state (peer review 5)"
+    perf = method_body("boolean", "devicePerformance")
+    assert "UniFiValues.publishesPerformance(dev.get(\"state\").asString())" in perf
 
     for kind in ("UniFiGateway", "UniFiSwitch", "UniFiAccessPoint"):
         block = DESCRIBE[DESCRIBE.index(f'<ResourceKind key="{kind}"'):]
@@ -91,6 +96,9 @@ def main():
                          r'(?:<!--.*?-->\s*)?<ResourceAttribute key="state"[^>]*'
                          r'isProperty="false"', block, re.S), \
             f"{kind} does not declare the Status|state metric"
+        assert re.search(r'<ResourceAttribute key="state_code"[^>]*dataType="string"'
+                         r'[^>]*isProperty="true"', block), \
+            f"{kind} does not declare the Status|state_code property"
     print("test_present_only: all assertions passed")
 
 

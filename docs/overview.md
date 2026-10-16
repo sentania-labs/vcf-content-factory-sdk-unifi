@@ -49,7 +49,10 @@ Build 15 changes to the metric set:
 
 - **New `Status|state`** on the gateway, switch and access point: 1 when
   the device is connected, 0 when it is not (disconnected, upgrading,
-  provisioning and so on).
+  provisioning and so on), and **new `Status|state_code`**, a property
+  naming the state: disconnected, connected, pending adoption, upgrading,
+  provisioning, heartbeat missed, adopting, inform error, or the number
+  for any other code.
 - **New `Traffic|tx_rate` / `rx_rate`** (bytes/s) on switch ports, radios
   and WAN interfaces, from UniFi's own `tx_bytes-r` / `rx_bytes-r` rate
   fields. `Traffic|tx_bytes` / `rx_bytes` stay, and are cumulative
@@ -136,11 +139,15 @@ logged at debug only, never WARN spam.
   published only when the controller sends its field as a number; before
   build 15 a missing field was published as 0 (0% CPU, 0 clients, 0
   satisfaction). A satisfaction of -1, UniFi's "no data", is not
-  published. A gateway, switch or access point that is not connected
-  publishes `Status|state` = 0 and its properties, and no metrics; its
-  switch ports, radios and WAN interfaces publish no metrics either. So a
-  blank stretch on a device's CPU or traffic chart, with `Status|state` at
-  0, means the device was disconnected, not that collection broke. A device
+  published. A gateway, switch or access point that is disconnected or
+  whose heartbeat is missed (`Status|state_code` disconnected or heartbeat
+  missed) publishes `Status|state` = 0 and its properties, and no metrics;
+  its switch ports, radios and WAN interfaces publish no metrics either. So
+  a blank stretch on a device's CPU or traffic chart, with that state code,
+  means the device was offline, not that collection broke. A device in any
+  other state that is not connected (upgrading, provisioning, adopting and
+  so on) reads 0 on `Status|state` but keeps publishing the metrics it
+  reports. A device
   whose state is not reported publishes no state and the metrics it does
   report. Views, super metrics and averages that used to count those zeros
   read differently from build 15 (averages that included offline zeros

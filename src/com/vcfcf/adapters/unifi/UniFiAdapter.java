@@ -815,24 +815,28 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 	}
 
 	/**
-	 * Build 15 (issue #14): whether a Network device is connected
-	 * ({@code state} 1), not ({@code state} anything else) or unknown
-	 * (no readable {@code state}, null).
+	 * Build 15 (issue #14, peer review 5): {@code Status|state} (1 connected,
+	 * 0 not) and {@code Status|state_code} (the state's short name) for a
+	 * gateway, switch or access point, nothing when the state is unknown.
+	 * Returns whether its performance metrics are published: not when it is
+	 * disconnected (0) or its heartbeat is missed (6); see
+	 * {@link UniFiValues#publishesPerformance}.
 	 */
-	private static Boolean deviceConnected(SimpleJson dev) {
-		return UniFiValues.connected(dev.get("state").asString());
+	private static boolean publishState(List<MetricData> out, SimpleJson dev) {
+		String raw = dev.get("state").asString();
+		metricIfPresent(out, "Status|state",
+				UniFiValues.stateMetric(UniFiValues.connected(raw)));
+		String name = UniFiValues.stateName(raw);
+		if (name != null) prop(out, "Status|state_code", name);
+		return UniFiValues.publishesPerformance(raw);
 	}
 
 	/**
-	 * Build 15 (issue #14): {@code Status|state} (1 connected, 0 not) for a
-	 * gateway, switch or access point, nothing when the state is unknown.
-	 * Returns whether its performance metrics are published: not when it
-	 * is known to be disconnected.
+	 * Build 15 (issue #14, peer review 5): whether a port, radio or WAN of
+	 * this device publishes metrics (the device's state decides).
 	 */
-	private static boolean publishState(List<MetricData> out, SimpleJson dev) {
-		Boolean connected = deviceConnected(dev);
-		metricIfPresent(out, "Status|state", UniFiValues.stateMetric(connected));
-		return UniFiValues.publishesPerformance(connected);
+	private static boolean devicePerformance(SimpleJson dev) {
+		return UniFiValues.publishesPerformance(dev.get("state").asString());
 	}
 
 	/**
@@ -909,7 +913,8 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 			return;
 		}
 
-		// Build 15 (issue #14): state first; a disconnected gateway
+		// Build 15 (issue #14): state first; a disconnected (0) or
+		// heartbeat-missed (6) gateway
 		// publishes state and properties only, and every metric is
 		// published only when its field is present.
 		if (publishState(out, dev)) {
@@ -959,8 +964,9 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		}
 
 		// Build 15 (issue #14): none of the WAN's metrics while its gateway
-		// is disconnected; otherwise each only when present.
-		if (UniFiValues.publishesPerformance(deviceConnected(dev))) {
+		// is disconnected or its heartbeat missed (peer review 5);
+		// otherwise each only when present.
+		if (devicePerformance(dev)) {
 			// Cumulative counters (build 15, issue #16: unit bytes, was
 			// declared bytes/s) and UniFi's own rates (issue #29).
 			metricIfPresent(out, "Traffic|tx_bytes", wan.get("tx_bytes"));
@@ -996,7 +1002,8 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 			return;
 		}
 
-		// Build 15 (issue #14): state first; a disconnected switch
+		// Build 15 (issue #14): state first; a disconnected (0) or
+		// heartbeat-missed (6) switch
 		// publishes state and properties only.
 		boolean perf = publishState(out, dev);
 		if (perf) {
@@ -1068,8 +1075,9 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		}
 
 		// Build 15 (issue #14): none of the port's metrics while its switch
-		// is disconnected; otherwise each only when present.
-		boolean perf = UniFiValues.publishesPerformance(deviceConnected(dev));
+		// is disconnected or its heartbeat missed (peer review 5);
+		// otherwise each only when present.
+		boolean perf = devicePerformance(dev);
 		if (perf) {
 			metricIfPresent(out, "Traffic|tx_bytes", port.get("tx_bytes"));
 			metricIfPresent(out, "Traffic|rx_bytes", port.get("rx_bytes"));
@@ -1142,7 +1150,8 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 			return;
 		}
 
-		// Build 15 (issue #14): state first; a disconnected access point
+		// Build 15 (issue #14): state first; a disconnected (0) or
+		// heartbeat-missed (6) access point
 		// publishes state and properties only.
 		if (publishState(out, dev)) {
 			systemStats(out, dev);
@@ -1179,8 +1188,9 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		}
 
 		// Build 15 (issue #14): none of the radio's metrics while its access
-		// point is disconnected; otherwise each only when present.
-		boolean perf = UniFiValues.publishesPerformance(deviceConnected(dev));
+		// point is disconnected or its heartbeat missed (peer review 5);
+		// otherwise each only when present.
+		boolean perf = devicePerformance(dev);
 		if (perf) {
 			metricIfPresent(out, "RF|channel", radio.get("channel"));
 			metricIfPresent(out, "RF|tx_power", radio.get("tx_power"));

@@ -69,6 +69,7 @@ Generated from `describe.xml` and `resources.properties` for build 15 (dev 0.0.0
 | Key | Label | Type | Unit | Monitored |
 |---|---|---|---|---|
 | `state` | State (1 = connected) | metric | - | yes |
+| `state_code` | State Name | property | - | - |
 
 #### Temperature
 
@@ -151,6 +152,7 @@ Generated from `describe.xml` and `resources.properties` for build 15 (dev 0.0.0
 | Key | Label | Type | Unit | Monitored |
 |---|---|---|---|---|
 | `state` | State (1 = connected) | metric | - | yes |
+| `state_code` | State Name | property | - | - |
 
 #### PoE
 
@@ -259,6 +261,7 @@ Generated from `describe.xml` and `resources.properties` for build 15 (dev 0.0.0
 | Key | Label | Type | Unit | Monitored |
 |---|---|---|---|---|
 | `state` | State (1 = connected) | metric | - | yes |
+| `state_code` | State Name | property | - | - |
 
 #### Configuration
 

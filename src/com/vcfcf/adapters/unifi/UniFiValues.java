@@ -67,12 +67,48 @@ final class UniFiValues {
 
 	/**
 	 * Whether a device's performance metrics (and those of its ports, radios
-	 * and WAN interfaces) are published: not when it is known to be
-	 * disconnected, since the controller then reports its last values or
-	 * none. Unknown state publishes what is present.
+	 * and WAN interfaces) are published, from its raw {@code state}. Not
+	 * when it is disconnected (0) or its heartbeat is missed (6): the
+	 * controller then reports its last values or none. Every other state,
+	 * upgrading (4), provisioning (5), adopting (7) and the rest, publishes
+	 * what is present (peer review 5: an upgrading AP still reports real
+	 * values). An unknown state publishes what is present.
 	 */
-	static boolean publishesPerformance(Boolean connected) {
-		return !Boolean.FALSE.equals(connected);
+	static boolean publishesPerformance(String rawState) {
+		Integer code = stateCode(rawState);
+		return code == null || (code != 0 && code != 6);
+	}
+
+	/**
+	 * {@code Status|state_code}: the device state's short name (0
+	 * disconnected, 1 connected, 2 pending adoption, 4 upgrading, 5
+	 * provisioning, 6 heartbeat missed, 7 adopting, 9 inform error), any
+	 * other code as its number, {@code null} when the state is absent or not
+	 * a whole number.
+	 */
+	static String stateName(String rawState) {
+		Integer code = stateCode(rawState);
+		if (code == null) return null;
+		switch (code) {
+			case 0: return "disconnected";
+			case 1: return "connected";
+			case 2: return "pending adoption";
+			case 4: return "upgrading";
+			case 5: return "provisioning";
+			case 6: return "heartbeat missed";
+			case 7: return "adopting";
+			case 9: return "inform error";
+			default: return String.valueOf(code);
+		}
+	}
+
+	/** The state as a whole number, or null. */
+	private static Integer stateCode(String rawState) {
+		Double d = number(rawState);
+		if (d == null || d != Math.rint(d) || Math.abs(d) > Integer.MAX_VALUE) {
+			return null;
+		}
+		return d.intValue();
 	}
 
 	/**

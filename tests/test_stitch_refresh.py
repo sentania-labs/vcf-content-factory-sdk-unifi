@@ -35,6 +35,15 @@ def main():
     assert "fetchVmnicNeighbours(h.identifier, h.name)" in loop, \
         "no per-host fallback for a failed bulk batch"
     assert '"resourcePropertiesList"' in ST
+    # Peer review 1 and 2.
+    assert "VmnicLldp.missingFromAnswer(batch, byId.keySet())" in ST, \
+        "a host missing from a bulk answer is taken as read with no neighbours"
+    assert "if (perHost.contains(h.identifier)) {" in ST
+    assert "getOrDefault(h.identifier" not in ST, \
+        "an omitted host defaults to no neighbours"
+    assert "VmnicLldp.requireResourceList(" in ST, \
+        "a Call A answer without resourceList is cached as an empty host list"
+    assert "if (list == null || !list.isList()) return out;" not in ST
     assert "unread == pending.size()" in ST, \
         "a refresh that read no host would be cached as good"
     assert re.search(r"if \(unread > 0\) \{\s*throw new RefreshCache\.Partial\(", ST), \

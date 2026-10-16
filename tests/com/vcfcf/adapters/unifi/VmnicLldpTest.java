@@ -15,6 +15,8 @@ public final class VmnicLldpTest {
 	public static void main(String[] args) {
 		bulkPaths();
 		extraction();
+		missingFromAnswer();
+		hostListRequired();
 		System.out.println("VmnicLldpTest: all assertions passed");
 	}
 
@@ -36,6 +38,34 @@ public final class VmnicLldpTest {
 		T.eq("/api/resources/properties?resourceId=a%2Fb%26c",
 				VmnicLldp.bulkPropertiesPaths(Arrays.asList("a/b&c"), 50).get(0),
 				"ids are encoded");
+	}
+
+	/** Peer review 1: an id the 200 answer omits is not "read, no neighbours". */
+	static void missingFromAnswer() {
+		List<String> asked = Arrays.asList("a", "b", "c", "d");
+		T.eq(Arrays.asList("b", "d"), VmnicLldp.missingFromAnswer(asked,
+				new java.util.HashSet<>(Arrays.asList("a", "c", "zz"))),
+				"omitted ids, in order");
+		T.eq(Collections.<String>emptyList(), VmnicLldp.missingFromAnswer(asked,
+				new java.util.HashSet<>(asked)), "all answered");
+	}
+
+	/** Peer review 2: no resourceList is a failed read, not an empty list. */
+	static void hostListRequired() {
+		for (boolean[] c : new boolean[][]{{false, false}, {true, false}, {false, true}}) {
+			try {
+				VmnicLldp.requireResourceList(c[0], c[1]);
+				throw new AssertionError("must throw for " + c[0] + "/" + c[1]);
+			} catch (java.io.IOException expected) {
+				T.check(expected.getMessage().contains("resourceList"),
+						expected.getMessage());
+			}
+		}
+		try {
+			VmnicLldp.requireResourceList(true, true);
+		} catch (java.io.IOException e) {
+			throw new AssertionError("a real list must pass", e);
+		}
 	}
 
 	static void extraction() {

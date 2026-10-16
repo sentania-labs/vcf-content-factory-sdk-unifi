@@ -117,7 +117,8 @@ public final class UniFiStitcher {
 	 *
 	 * @return one entry per HostSystem the Suite API returned; never
 	 *         {@code null}, may be empty
-	 * @throws Exception if Call A itself fails (no host list at all)
+	 * @throws Exception if Call A itself fails, or its answer carries no
+	 *         {@code resourceList} (peer review 2)
 	 */
 	public List<ForeignHost> listHostsWithVmnicLldp() throws Exception {
 		List<ForeignHost> out = new ArrayList<>();
@@ -128,9 +129,11 @@ public final class UniFiStitcher {
 				+ java.net.URLEncoder.encode("HostSystem", "UTF-8")
 				+ "&pageSize=10000");
 		SimpleJson parsed = SimpleJson.parse(body);
-		if (parsed == null || parsed.isNull()) return out;
-		SimpleJson list = parsed.get("resourceList");
-		if (list == null || !list.isList()) return out;
+		SimpleJson list = parsed == null ? null : parsed.get("resourceList");
+		// Peer review 2: no resourceList is a failed read (thrown, so the
+		// cache reuses its last good list), never an empty host list.
+		VmnicLldp.requireResourceList(parsed != null && parsed.isObject(),
+				list != null && list.isList());
 
 		for (SimpleJson r : list.asList()) {
 			if (r == null || r.isNull()) continue;
@@ -184,6 +187,7 @@ public final class UniFiStitcher {
 		List<String> paths = VmnicLldp.bulkPropertiesPaths(ids, VmnicLldp.BULK_BATCH);
 		List<List<String>> batches = VmnicLldp.batches(ids, VmnicLldp.BULK_BATCH);
 		int fallbacks = 0;
+		int omitted = 0;
 		int unread = 0;
 		int next = 0;
 		for (int b = 0; b < paths.size(); b++) {
@@ -191,18 +195,24 @@ public final class UniFiStitcher {
 			Map<String, List<VmnicNeighbour>> byId = fetchBulk(paths.get(b),
 					batch.size());
 			if (byId == null) fallbacks++;
+			// Peer review 1: a host the bulk answer omits is read per host,
+			// like a failed batch; one that still cannot be read is unread.
+			java.util.Set<String> perHost = new java.util.HashSet<>(byId == null
+					? batch : VmnicLldp.missingFromAnswer(batch, byId.keySet()));
+			if (byId != null && !perHost.isEmpty()) {
+				omitted += perHost.size();
+			}
 			for (int i = 0; i < batch.size(); i++, next++) {
 				PendingHost h = pending.get(next);
 				List<VmnicNeighbour> vmnics;
-				if (byId == null) {
+				if (perHost.contains(h.identifier)) {
 					vmnics = fetchVmnicNeighbours(h.identifier, h.name);
 					if (vmnics == null) {
 						unread++;
 						vmnics = java.util.Collections.emptyList();
 					}
 				} else {
-					vmnics = byId.getOrDefault(h.identifier,
-							java.util.Collections.emptyList());
+					vmnics = byId.get(h.identifier);
 				}
 				out.set(h.index, new ForeignHost(h.key, vmnics));
 			}
@@ -219,6 +229,8 @@ public final class UniFiStitcher {
 				+ " hosts in " + paths.size() + " bulk request(s)"
 				+ (fallbacks == 0 ? "" : ", " + fallbacks
 						+ " batch(es) read per host after the bulk read failed")
+				+ (omitted == 0 ? "" : ", " + omitted
+						+ " host(s) missing from a bulk answer read per host")
 				+ (unread == 0 ? "" : ", " + unread + " host(s) unread"));
 		// Review N5: some hosts unread is a partial refresh. The caller's
 		// cache reuses its last good list instead (or, with none, uses this
@@ -252,8 +264,8 @@ public final class UniFiStitcher {
 	 * answered host's vmnic neighbours by resource id, or {@code null} when
 	 * the request failed or its answer has no {@code resourcePropertiesList}
 	 * naming any host (the caller then reads that batch per host). A host
-	 * the answer omits while naming others has no properties: no
-	 * neighbours.
+	 * the answer omits while naming others is read per host by the caller
+	 * (peer review 1), never taken for a host with no neighbours.
 	 */
 	private Map<String, List<VmnicNeighbour>> fetchBulk(String path, int asked)
 			throws InterruptedException {

@@ -6,6 +6,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Consumer;
 
 /**
@@ -44,6 +45,33 @@ final class VmnicLldp {
 			paths.add(sb.toString());
 		}
 		return paths;
+	}
+
+	/**
+	 * Peer review 1: the ids of {@code asked} that a bulk answer does not
+	 * name, in order. The caller reads each of them per host, and counts
+	 * one it cannot read as unread, so an omitted host is never taken for
+	 * a host with no neighbours.
+	 */
+	static List<String> missingFromAnswer(List<String> asked, Set<String> answered) {
+		List<String> out = new ArrayList<>();
+		for (String id : asked) {
+			if (!answered.contains(id)) out.add(id);
+		}
+		return out;
+	}
+
+	/**
+	 * Peer review 2: Call A must carry a {@code resourceList} list. An
+	 * answer without one (unparseable, an error body) is a failed read, not
+	 * "no hosts", so the caller's cache keeps its last good host list.
+	 */
+	static void requireResourceList(boolean answerIsObject, boolean hasList)
+			throws java.io.IOException {
+		if (!answerIsObject || !hasList) {
+			throw new java.io.IOException("vmnic stitch: the HostSystem list "
+					+ "answer carries no resourceList; treating it as unread");
+		}
 	}
 
 	/** The ids each path from {@link #bulkPropertiesPaths} asks for, in order. */

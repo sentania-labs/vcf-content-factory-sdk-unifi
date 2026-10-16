@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.0.15 (Unreleased)
+
+Dev preview build 15 (`build-sdk` stamps 0.0.0.15); the 1.1.0 release line
+is unchanged until a `v1.1.0.15` tag. The factory brief is
+knowledge/designs/sdk-adapters/unifi-build-15-correctness-and-hygiene.md.
+
 ## 0.0.0.14 (Unreleased)
 
 Dev preview build 14 (`build-sdk` stamps 0.0.0.14); the 1.1.0 release line

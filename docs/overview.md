@@ -10,9 +10,13 @@ NVRs and cameras — and breaks switches and APs down to per-port and
 per-radio child objects with PoE tracking. It replaces the Tier 1 UniFi
 Network and UniFi Network Integration management packs.
 
-Each cycle the adapter performs one UniFi Network / Protect pull into a
-per-cycle snapshot and emits the full topology and metrics, with the
-controller-wide picture anchored on the World resource.
+Each cycle the adapter performs one UniFi Network pull into a per-cycle
+snapshot and emits the full topology and metrics, with the controller-wide
+picture anchored on the World resource. The Protect bootstrap is fetched
+every cycle too; when that fetch fails, Protect is absent for the cycle and
+the NVR and cameras publish nothing that cycle. The vmnic stitch's Suite
+API host list changes rarely and is fetched at most every 15 minutes
+(build 15, issue #21).
 
 ### Resource kinds
 
@@ -40,6 +44,27 @@ Roughly 130 metric and property keys across the eleven kinds (see
 `REFERENCE.md` for the authoritative list): device CPU / memory / uptime,
 per-WAN throughput, per-switch-port traffic and PoE draw, per-radio channel
 utilization and client counts, and the Protect NVR / camera state.
+
+Build 15 changes to the metric set:
+
+- **New `Status|state`** on the gateway, switch and access point: 1 when
+  the device is connected, 0 when it is not (disconnected, upgrading,
+  provisioning and so on), and **new `Status|state_code`**, a property
+  naming the state: disconnected, connected, pending adoption, upgrading,
+  provisioning, heartbeat missed, adopting, inform error, or the number
+  for any other code.
+- **New `Traffic|tx_rate` / `rx_rate`** (bytes/s) on switch ports, radios
+  and WAN interfaces, from UniFi's own `tx_bytes-r` / `rx_bytes-r` rate
+  fields. `Traffic|tx_bytes` / `rx_bytes` stay, and are cumulative
+  counters since the device's counter reset (the WAN ones were mislabelled
+  bytes/s before build 15). Use the rate keys for throughput charts. The
+  radio rate field is not yet confirmed on a live controller, so a radio
+  may publish no rate.
+- **Renamed:** camera `Status|last_motion` (an epoch timestamp) is now
+  `Status|seconds_since_last_motion` (time since the last motion), and NVR
+  `Configuration|recording_retention_mode` (the raw milliseconds as text)
+  is now the numeric `Configuration|recording_retention_days`. The old
+  keys stop updating and keep their last value.
 
 ## Cross-Adapter Behavior
 
@@ -74,7 +99,18 @@ HostSystem resources and reads their properties over the local VCF
 Operations Suite API using the collector's ambient credentials. When the
 Suite API is unavailable, or a fetch/match fails, the stitch is skipped
 (WARN once) and all UniFi resources collect normally — collection is
-never failed over the optional cross-link. Zero or ambiguous
+never failed over the optional cross-link.
+
+Since build 15 (issue #21) the host list and the hosts' LLDP properties
+are fetched at most every 15 minutes, the properties in bulk (one Suite
+API request per 50 hosts, `GET /api/resources/properties?resourceId=..`,
+instead of one per host), and the result is reused between fetches; the
+join against the UniFi inventory still runs every cycle. A batch the bulk
+request cannot read is read one host at a time, as before (one WARN per
+batch). A failed fetch reuses the last good host list, with a WARN, for up
+to an hour after it was fetched; past that the stitch is skipped until the
+Suite API answers again. A new vmnic cabling change therefore shows within
+about 15 minutes. Zero or ambiguous
 `(switch, port)` matches are legitimate (no fabricated edges, ever) and
 are counted in a one-line INFO summary each cycle; per-pair misses are
 logged at debug only, never WARN spam.
@@ -99,6 +135,38 @@ logged at debug only, never WARN spam.
 
 ## Notable Behaviors
 
+- **A gap means not reported, never a fake 0** (build 15). A metric is
+  published only when the controller sends its field as a number; before
+  build 15 a missing field was published as 0 (0% CPU, 0 clients, 0
+  satisfaction). A satisfaction of -1, UniFi's "no data", is not
+  published. A gateway, switch or access point that is not informing the
+  controller (any state other than connected, upgrading, provisioning or
+  adopting; see Device state codes below) publishes `Status|state` = 0,
+  its state code and its properties, and no metrics; its switch ports,
+  radios and WAN interfaces publish no metrics either. So a blank stretch
+  on a device's CPU or traffic chart, with such a state code, means the
+  device was not reporting, not that collection broke. An upgrading,
+  provisioning or adopting device reads 0 on `Status|state` but keeps
+  publishing the metrics it reports. A device
+  whose state is not reported publishes no state and the metrics it does
+  report. Views, super metrics and averages that used to count those zeros
+  read differently from build 15 (averages that included offline zeros
+  rise).
+
+- **Records with no identity are skipped** (build 15). A device or camera
+  the controller reports without a MAC, a switch port without a
+  `port_idx` and a radio without a radio code (for example on a device
+  pending adoption) is not discovered, not related and not counted in the
+  site's Device Count or the NVR's Camera Count. A device pending adoption
+  (`adopted: false`) is not discovered or counted either until it is
+  adopted. An NVR without a MAC is
+  not registered either; its cameras still are, with no parent in the
+  tree. Device Count counts only gateways, switches and access points, the
+  types the pack discovers. Each skip is logged at DEBUG, and the `UniFi
+  API snapshot` INFO line ends with `skipped with no identity: <n>
+  devices, <n> ports, <n> radios, <n> cameras, <n> nvr` when any were
+  skipped.
+
 - **Session self-recovery on 401.** UniFi controller sessions expire on the
   server side. Build 5 bundles the framework jar that makes the session
   cookie strategy (`SessionCookieAuth`) invalidate its cached `TOKEN`
@@ -114,10 +182,93 @@ logged at debug only, never WARN spam.
   Session cookie, login password, and `unifises` token are redacted from
   every path- and body-bearing error and log line.
 
+- **A failed snapshot is not retried per resource (build 14).** When the
+  per-cycle snapshot cannot be built (wrong password, controller down),
+  the failure is cached: the first caller of the cycle (usually the
+  discovery step) reports it, and every other resource of that cycle
+  fails from the cached result without contacting the controller. The
+  adapter log gets one `UniFi snapshot build failed` WARN from the
+  adapter, plus the framework's own line for the discovery step and for
+  each resource that fails from the cached result. Each framework line is
+  one line naming the original failure (its class and message), with no
+  stack trace, on the cycle that tried the login as on the cycles served
+  from the cache; the original with its stack is logged at DEBUG. After an
+  authentication refusal (HTTP 401 or 403) or rate limiting (HTTP 429) no
+  login is tried for 15 minutes unless the instance is edited, so a wrong
+  or rotated password costs one failed login every few cycles instead of
+  one per resource. The WARN says which it was and whether the login or a
+  data call was refused. Any other failure is tried again on the next
+  cycle. During a wrong-password back-off the adapter instance still
+  shows **Collecting** in the account list while every UniFi object is
+  ERROR: the adapter cannot change the instance status (a framework
+  limitation).
+
+- **An unreachable controller is DOWN, not ERROR (build 14).** Connection
+  refused, a connect or request timeout, an unknown host name or no route
+  to the host marks the UniFi objects DOWN (the target is down), wherever
+  the network error sits in the failure. A refused login, a certificate
+  failure or an unreadable answer is ERROR.
+
+- **One unreadable site does not take out the others (build 14).** If the
+  device list of one site cannot be read (a permission on that site, a
+  timeout, a 5xx), that site's site, device, port, radio, WAN and Wireless
+  Summary objects go to ERROR for the cycle, and every other site collects
+  normally. The adapter log gets one WARN naming the site, plus the
+  framework's own line for each resource of that site. Its existing
+  relationships are left as they are. A device that moved between that
+  site and a readable one in the meantime can briefly show the wrong site:
+  moved out of the failed site, it is under both sites; moved into it, it
+  is under neither (and ERROR, since it was not read). Both heal on the
+  first cycle the failed site is read again. The whole cycle fails only
+  when the site list itself or every site's device list cannot be read. If
+  one site's call cannot connect to the controller (connection refused,
+  connect timeout, unknown host, no route), the sites after it are not
+  asked that cycle and are ERROR too, so a controller that is down costs
+  one timeout per cycle, not one per site. A site whose request times out
+  after connecting (a slow, large site) is ERROR alone and the sites after
+  it are still read; a controller that accepts connections but answers
+  nothing therefore costs one timeout per site, and if every site times
+  out the objects are DOWN. A site whose device list is refused (HTTP
+  401 or 403, an authentication or permission refusal, or 429, rate
+  limiting) while other sites are read is not asked again for 15 minutes
+  unless the instance is edited: its objects stay ERROR, its relationships
+  are kept, and the other sites collect every cycle. The adapter log gets
+  one WARN when that cool-down starts and one INFO when it has passed and
+  the site is asked again. Any other site failure (a 5xx, a timeout) is
+  asked again on the next cycle. A refusal on every site fails the whole
+  cycle into the 15-minute back-off above, as before.
+
 - **Fresh-instance discovery works on VCF Ops 9.0.2.** The adapter
   enumerates its topology on the collect path (`discoverOnCollect()`), so a
   freshly created instance populates on its first collection cycle rather
   than waiting on a discovery task the platform may never invoke.
+
+### Device state codes
+
+The UniFi device `state` field (`stat/device`), as this pack reads it for
+`Status|state`, `Status|state_code` and whether metrics are published:
+
+| Code | `Status|state_code` | `Status|state` | Metrics published |
+|---|---|---|---|
+| 0 | disconnected | 0 | no |
+| 1 | connected | 1 | yes |
+| 2 | pending adoption | 0 | no |
+| 4 | upgrading | 0 | yes |
+| 5 | provisioning | 0 | yes |
+| 6 | heartbeat missed | 0 | no |
+| 7 | adopting | 0 | yes |
+| 9 | inform error | 0 | no |
+| any other | the number | 0 | no |
+| absent or not a whole number | (not published) | (not published) | yes, fields present |
+
+Source: codes 1 and 0 are recorded on the factory's lab controller
+(`knowledge/context/api-maps/unifi-network-api.md`, `stat_device.state`,
+"1=connected, 0=disconnected"; only 1 was observed). The other names are
+community-sourced (the device state values used by open-source UniFi
+clients) and not yet seen on a live controller; confirm on devel. Metrics
+publish only while the device is informing the controller (1, 4, 5, 7):
+in any other state the controller holds last values, which would
+otherwise publish as current.
 
 ## Known Limitations
 

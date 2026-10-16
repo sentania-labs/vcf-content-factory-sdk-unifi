@@ -29,14 +29,17 @@ import java.util.Map;
  * into the adapter's own UniFiSwitch / UniFiSwitchPort inventory — the
  * opposite direction of build ≤8's {@code matchHostByName}, which is removed.
  *
- * <p><b>No cross-cycle cache.</b> {@link #listHostsWithVmnicLldp()} performs a
- * fresh Call A ({@code GET /api/resources?adapterKind=VMWARE&resourceKind=
- * HostSystem}) plus one Call B per host ({@code GET /api/resources/{id}/
- * properties}) on every invocation — the caller ({@code Snapshot.build()})
- * already throttles the overall refresh to once per {@code
- * MIN_REFRESH_INTERVAL_MS}, so no additional TTL cache is needed here (the
- * build ≤8 {@code ForeignResourceResolver} 5-minute cache is gone along with
- * the resolver itself).
+ * <p><b>Bulk property read, cached by the caller (build 15, issue #21).</b>
+ * {@link #listHostsWithVmnicLldp()} performs Call A ({@code GET
+ * /api/resources?adapterKind=VMWARE&resourceKind=HostSystem}) and then reads
+ * the hosts' properties in bulk, {@link VmnicLldp#BULK_BATCH} hosts per
+ * {@code GET /api/resources/properties?resourceId=..} request, instead of one
+ * {@code GET /api/resources/{id}/properties} per host. A batch whose bulk
+ * request fails, or whose answer names none of the hosts asked for, is read
+ * per host as before (one WARN per such batch), so an appliance that does
+ * not answer the bulk form still stitches. Before build 15 this ran on every
+ * snapshot build; the adapter now holds the result in a {@link RefreshCache}
+ * and calls this at most every 15 minutes.
  *
  * <p><b>Same optional semantics as build ≤8.</b> Callers gate on
  * {@code stitcher == null} (Suite API unavailable — e.g. a remote collector
@@ -46,8 +49,6 @@ import java.util.Map;
  * internal UniFi topology.
  */
 public final class UniFiStitcher {
-
-	private static final String LLDP_ANCHOR = "|discoveryProtocol|lldp|";
 
 	private final SuiteApiStitcher stitcher;
 	private final Logger logger;
@@ -102,29 +103,47 @@ public final class UniFiStitcher {
 	 * <p>Call A ({@code GET /api/resources?adapterKind=VMWARE&resourceKind=
 	 * HostSystem&pageSize=10000}) supplies each host's honest-uniqueness
 	 * {@link ResourceKey} plus its Suite API resource UUID
-	 * ({@code identifier}). Call B ({@code GET /api/resources/{identifier}/
-	 * properties}) is then issued per host to read its published LLDP vmnic
-	 * properties. A host with no top-level {@code identifier} cannot be
-	 * queried for Call B and is skipped (debug, not fabricated). A Call B
-	 * failure for one host is caught, logged at WARN, and that host
-	 * contributes zero vmnic neighbours — it does not abort enumeration of the
-	 * remaining hosts.
+	 * ({@code identifier}). Call B then reads the hosts' published LLDP
+	 * vmnic properties in bulk (build 15, issue #21: {@code GET
+	 * /api/resources/properties?resourceId=..}, {@link VmnicLldp#BULK_BATCH}
+	 * hosts per request), falling back to {@code GET
+	 * /api/resources/{identifier}/properties} per host for a batch whose bulk
+	 * read fails or answers none of its hosts. A host with no top-level
+	 * {@code identifier} cannot be queried for Call B and is skipped (debug,
+	 * not fabricated). A per-host Call B failure is caught, logged at WARN,
+	 * and that host contributes zero vmnic neighbours; it does not abort
+	 * enumeration of the remaining hosts. An interrupt (Stop Collecting) is
+	 * thrown.
 	 *
 	 * @return one entry per HostSystem the Suite API returned; never
 	 *         {@code null}, may be empty
-	 * @throws Exception if Call A itself fails (no host list at all)
+	 * @throws Exception if Call A itself fails, or its answer carries no
+	 *         {@code resourceList} (peer review 2)
 	 */
 	public List<ForeignHost> listHostsWithVmnicLldp() throws Exception {
 		List<ForeignHost> out = new ArrayList<>();
+		List<PendingHost> pending = new ArrayList<>();
 		String body = stitcher.get("/api/resources?adapterKind="
 				+ java.net.URLEncoder.encode("VMWARE", "UTF-8")
 				+ "&resourceKind="
 				+ java.net.URLEncoder.encode("HostSystem", "UTF-8")
 				+ "&pageSize=10000");
 		SimpleJson parsed = SimpleJson.parse(body);
-		if (parsed == null || parsed.isNull()) return out;
-		SimpleJson list = parsed.get("resourceList");
-		if (list == null || !list.isList()) return out;
+		SimpleJson list = parsed == null ? null : parsed.get("resourceList");
+		// Peer review 2, review round 3: no resourceList is a failed read
+		// (thrown, so the cache reuses its last good list) unless
+		// pageInfo.totalCount is 0, a genuinely empty host list.
+		SimpleJson total = parsed == null ? null
+				: parsed.get("pageInfo").get("totalCount");
+		Long totalCount = total == null || total.isNull()
+				|| UniFiValues.number(total.asString()) == null ? null
+				: UniFiValues.number(total.asString()).longValue();
+		if (!VmnicLldp.hostListPresent(parsed != null && parsed.isObject(),
+				list != null && list.isList(), totalCount)) {
+			logger.info("vmnic stitch: the Suite API lists no HostSystem "
+					+ "(totalCount 0); nothing to stitch");
+			return out;
+		}
 
 		for (SimpleJson r : list.asList()) {
 			if (r == null || r.isNull()) continue;
@@ -157,79 +176,166 @@ public final class UniFiStitcher {
 				}
 			}
 
-			// The top-level resource UUID (build 8's bridge never read this —
-			// build 9 needs it for Call B). Absent → this host cannot be
+			// The top-level resource UUID (build 8's bridge never read this;
+			// build 9 needs it for Call B). Absent: this host cannot be
 			// queried for its LLDP properties; skip it, no fabrication.
 			String identifier = r.get("identifier").asString(null);
 			if (identifier == null || identifier.isEmpty()) {
 				logger.debug("listHostsWithVmnicLldp: host " + name
-						+ " has no top-level resource identifier — cannot fetch "
+						+ " has no top-level resource identifier, cannot fetch "
 						+ "properties, skipping");
 				out.add(new ForeignHost(hostKey, java.util.Collections.emptyList()));
 				continue;
 			}
+			pending.add(new PendingHost(out.size(), hostKey, identifier, name));
+			out.add(null); // filled below, keeping Call A order
+		}
 
-			out.add(new ForeignHost(hostKey, fetchVmnicNeighbours(identifier, name)));
+		// Build 15 (issue #21): Call B in bulk, batches of BULK_BATCH.
+		List<String> ids = new ArrayList<>();
+		for (PendingHost h : pending) ids.add(h.identifier);
+		List<String> paths = VmnicLldp.bulkPropertiesPaths(ids, VmnicLldp.BULK_BATCH);
+		List<List<String>> batches = VmnicLldp.batches(ids, VmnicLldp.BULK_BATCH);
+		int fallbacks = 0;
+		int omitted = 0;
+		int unread = 0;
+		int next = 0;
+		for (int b = 0; b < paths.size(); b++) {
+			List<String> batch = batches.get(b);
+			Map<String, List<VmnicNeighbour>> byId = fetchBulk(paths.get(b),
+					batch.size());
+			if (byId == null) fallbacks++;
+			// Peer review 1: a host the bulk answer omits is read per host,
+			// like a failed batch; one that still cannot be read is unread.
+			java.util.Set<String> perHost = new java.util.HashSet<>(byId == null
+					? batch : VmnicLldp.missingFromAnswer(batch, byId.keySet()));
+			if (byId != null && !perHost.isEmpty()) {
+				omitted += perHost.size();
+			}
+			for (int i = 0; i < batch.size(); i++, next++) {
+				PendingHost h = pending.get(next);
+				List<VmnicNeighbour> vmnics;
+				if (perHost.contains(h.identifier)) {
+					vmnics = fetchVmnicNeighbours(h.identifier, h.name);
+					if (vmnics == null) {
+						unread++;
+						vmnics = java.util.Collections.emptyList();
+					}
+				} else {
+					vmnics = byId.get(h.identifier);
+				}
+				out.set(h.index, new ForeignHost(h.key, vmnics));
+			}
+		}
+		// Build 15 (issue #21): the caller keeps this result for 15 minutes,
+		// so a refresh that could read no host's properties at all is a
+		// failure (the caller reuses its last good list), not a list of
+		// hosts without neighbours.
+		if (!pending.isEmpty() && unread == pending.size()) {
+			throw new java.io.IOException("vmnic stitch: the properties of none of "
+					+ pending.size() + " hosts could be read");
+		}
+		logger.info("vmnic stitch: read properties of " + pending.size()
+				+ " hosts in " + paths.size() + " bulk request(s)"
+				+ (fallbacks == 0 ? "" : ", " + fallbacks
+						+ " batch(es) read per host after the bulk read failed")
+				+ (omitted == 0 ? "" : ", " + omitted
+						+ " host(s) missing from a bulk answer read per host")
+				+ (unread == 0 ? "" : ", " + unread + " host(s) unread"));
+		// Review N5: some hosts unread is a partial refresh. The caller's
+		// cache reuses its last good list instead (or, with none, uses this
+		// one for the cycle without keeping it), so an unread host does not
+		// lose its LLDP claimant for 15 minutes.
+		if (unread > 0) {
+			throw new RefreshCache.Partial("vmnic stitch: the properties of "
+					+ unread + " of " + pending.size() + " hosts could not be read",
+					out);
 		}
 		return out;
 	}
 
+	/** A host from Call A waiting for its properties (Call B). */
+	private static final class PendingHost {
+		final int index;
+		final ResourceKey key;
+		final String identifier;
+		final String name;
+
+		PendingHost(int index, ResourceKey key, String identifier, String name) {
+			this.index = index;
+			this.key = key;
+			this.identifier = identifier;
+			this.name = name;
+		}
+	}
+
 	/**
-	 * Call B for one host: read its latest properties and extract every
-	 * complete vmnic LLDP neighbour pair (§2). A vmnic with only one of
-	 * {@code systemName}/{@code portName} present is a no-op (debug, no
-	 * candidate). CDP-carrying keys ({@code |discoveryProtocol|cdp|...}) never
-	 * match the {@code |discoveryProtocol|lldp|} anchor and are silently
-	 * excluded — out of scope for build 9.
+	 * Build 15 (issue #21): one bulk properties request. Returns each
+	 * answered host's vmnic neighbours by resource id, or {@code null} when
+	 * the request failed or its answer has no {@code resourcePropertiesList}
+	 * naming any host (the caller then reads that batch per host). A host
+	 * the answer omits while naming others is read per host by the caller
+	 * (peer review 1), never taken for a host with no neighbours.
+	 */
+	private Map<String, List<VmnicNeighbour>> fetchBulk(String path, int asked)
+			throws InterruptedException {
+		try {
+			SimpleJson parsed = SimpleJson.parse(stitcher.get(path));
+			SimpleJson list = parsed.get("resourcePropertiesList");
+			Map<String, List<VmnicNeighbour>> out = new HashMap<>();
+			for (SimpleJson rp : list.asList()) {
+				String id = rp.get("resourceId").asString(null);
+				if (id == null || id.isEmpty()) continue;
+				out.put(id, toNeighbours(rp.get("property"), id));
+			}
+			if (out.isEmpty()) {
+				logger.warn("vmnic stitch: bulk properties read for " + asked
+						+ " hosts answered none of them; reading them one by one");
+				return null;
+			}
+			return out;
+		} catch (InterruptedException e) {
+			throw e;
+		} catch (Exception e) {
+			logger.warn("vmnic stitch: bulk properties read for " + asked
+					+ " hosts failed (" + e.getMessage()
+					+ "); reading them one by one");
+			return null;
+		}
+	}
+
+	/**
+	 * Call B for one host (the build 9 per-host read, now the fallback): read
+	 * its latest properties and extract every complete vmnic LLDP neighbour
+	 * pair. A failure is logged WARN and returns {@code null} (the host
+	 * contributes no neighbours; the caller counts it as unread).
 	 */
 	private List<VmnicNeighbour> fetchVmnicNeighbours(String hostResourceId,
-			String hostName) {
-		List<VmnicNeighbour> out = new ArrayList<>();
+			String hostName) throws InterruptedException {
 		try {
 			String body = stitcher.get("/api/resources/"
 					+ java.net.URLEncoder.encode(hostResourceId, "UTF-8")
 					+ "/properties");
-			SimpleJson parsed = SimpleJson.parse(body);
-			if (parsed == null || parsed.isNull()) return out;
-			SimpleJson props = parsed.get("property");
-			if (props == null || !props.isList()) return out;
-
-			Map<String, String> systemNameByVmnic = new HashMap<>();
-			Map<String, String> portNameByVmnic = new HashMap<>();
-			for (SimpleJson p : props.asList()) {
-				String pname = p.get("name").asString(null);
-				if (pname == null || !pname.startsWith("net:vmnic")) continue;
-				int firstPipe = pname.indexOf('|');
-				if (firstPipe < 0) continue;
-				String vmnicToken = pname.substring(4, firstPipe); // "vmnic0"
-				String rest = pname.substring(firstPipe);
-				// Anchor on the literal LLDP leaf path — deliberately excludes
-				// CDP hosts (|discoveryProtocol|cdp|...), out of scope here.
-				if (!rest.startsWith(LLDP_ANCHOR)) continue;
-				String leaf = rest.substring(LLDP_ANCHOR.length());
-				String val = p.get("value").asString(null);
-				if (val == null || val.isEmpty()) continue;
-				if ("systemName".equals(leaf)) {
-					systemNameByVmnic.put(vmnicToken, val);
-				} else if ("portName".equals(leaf)) {
-					portNameByVmnic.put(vmnicToken, val);
-				}
-			}
-
-			for (Map.Entry<String, String> e : systemNameByVmnic.entrySet()) {
-				String vmnic = e.getKey();
-				String portName = portNameByVmnic.get(vmnic);
-				if (portName == null || portName.isEmpty()) {
-					logger.debug("fetchVmnicNeighbours: host " + hostName + " "
-							+ vmnic + " has systemName but no portName — no "
-							+ "candidate");
-					continue;
-				}
-				out.add(new VmnicNeighbour(vmnic, e.getValue(), portName));
-			}
+			return toNeighbours(SimpleJson.parse(body).get("property"), hostName);
+		} catch (InterruptedException e) {
+			throw e;
 		} catch (Exception e) {
 			logger.warn("fetchVmnicNeighbours: properties fetch failed for host "
 					+ hostName + " (" + hostResourceId + "): " + e.getMessage());
+			return null;
+		}
+	}
+
+	/** The vmnic LLDP neighbour pairs in one {@code property[]} list. */
+	private List<VmnicNeighbour> toNeighbours(SimpleJson props, String hostName) {
+		List<String[]> pairs = new ArrayList<>();
+		for (SimpleJson p : props.asList()) {
+			pairs.add(new String[]{p.get("name").asString(null),
+					p.get("value").asString(null)});
+		}
+		List<VmnicNeighbour> out = new ArrayList<>();
+		for (String[] n : VmnicLldp.neighbours(pairs, hostName, logger::debug)) {
+			out.add(new VmnicNeighbour(n[0], n[1], n[2]));
 		}
 		return out;
 	}

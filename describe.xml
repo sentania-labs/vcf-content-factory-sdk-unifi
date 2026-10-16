@@ -25,8 +25,11 @@
 			                    required="true" dispOrder="1"/>
 			<ResourceIdentifier key="port" nameKey="7" type="string"
 			                    required="false" dispOrder="2" default="443"/>
+			<!-- Build 14 (issue #13): default false, so a new instance validates
+			     the controller certificate. Existing instances keep their stored
+			     value. Only "true" (any case) turns validation off. -->
 			<ResourceIdentifier key="allowInsecure" nameKey="8" type="string"
-			                    required="false" dispOrder="3" default="true"/>
+			                    required="false" dispOrder="3" default="false"/>
 		</ResourceKind>
 
 		<!-- ================================================================ -->
@@ -67,6 +70,14 @@
 				                   isProperty="false" defaultMonitored="true"/>
 			</ResourceGroup>
 
+			<!-- Build 15 (issue #14): 1 connected, 0 not (device state). -->
+			<ResourceGroup key="Status" nameKey="52" instanced="false">
+				<ResourceAttribute key="state" nameKey="53" dataType="float"
+				                   isProperty="false" defaultMonitored="true"/>
+				<!-- Build 15 (peer review 5): the state's short name. -->
+				<ResourceAttribute key="state_code" nameKey="54" dataType="string" isProperty="true"/>
+			</ResourceGroup>
+
 			<ResourceGroup key="Temperature" nameKey="37" instanced="false">
 				<ResourceAttribute key="temp_cpu" nameKey="38" dataType="float"
 				                   isProperty="false" defaultMonitored="true" unit="C"/>
@@ -102,9 +113,15 @@
 			<ResourceIdentifier key="wan_name" nameKey="61" type="string" required="true" dispOrder="1"/>
 
 			<ResourceGroup key="Traffic" nameKey="62" instanced="false">
+				<!-- Build 15 (issue #16): cumulative counters, not rates (were bytes/s). -->
 				<ResourceAttribute key="tx_bytes" nameKey="63" dataType="float"
-				                   isProperty="false" defaultMonitored="true" unit="bytes/s"/>
+				                   isProperty="false" defaultMonitored="true" unit="bytes"/>
 				<ResourceAttribute key="rx_bytes" nameKey="64" dataType="float"
+				                   isProperty="false" defaultMonitored="true" unit="bytes"/>
+				<!-- Build 15 (issue #29): UniFi's own rate fields (tx_bytes-r / rx_bytes-r). -->
+				<ResourceAttribute key="tx_rate" nameKey="75" dataType="float"
+				                   isProperty="false" defaultMonitored="true" unit="bytes/s"/>
+				<ResourceAttribute key="rx_rate" nameKey="76" dataType="float"
 				                   isProperty="false" defaultMonitored="true" unit="bytes/s"/>
 			</ResourceGroup>
 
@@ -145,6 +162,14 @@
 				                   isProperty="false" defaultMonitored="true" unit="%"/>
 			</ResourceGroup>
 
+			<!-- Build 15 (issue #14): 1 connected, 0 not (device state). -->
+			<ResourceGroup key="Status" nameKey="102" instanced="false">
+				<ResourceAttribute key="state" nameKey="103" dataType="float"
+				                   isProperty="false" defaultMonitored="true"/>
+				<!-- Build 15 (peer review 5): the state's short name. -->
+				<ResourceAttribute key="state_code" nameKey="104" dataType="string" isProperty="true"/>
+			</ResourceGroup>
+
 			<ResourceGroup key="PoE" nameKey="88" instanced="false">
 				<ResourceAttribute key="total_max_power" nameKey="89" dataType="float"
 				                   isProperty="false" defaultMonitored="true" unit="W"/>
@@ -182,6 +207,11 @@
 				                   isProperty="false" defaultMonitored="true"/>
 				<ResourceAttribute key="rx_errors" nameKey="116" dataType="float"
 				                   isProperty="false" defaultMonitored="true"/>
+				<!-- Build 15 (issue #29): UniFi's own rate fields (tx_bytes-r / rx_bytes-r). -->
+				<ResourceAttribute key="tx_rate" nameKey="137" dataType="float"
+				                   isProperty="false" defaultMonitored="true" unit="bytes/s"/>
+				<ResourceAttribute key="rx_rate" nameKey="138" dataType="float"
+				                   isProperty="false" defaultMonitored="true" unit="bytes/s"/>
 			</ResourceGroup>
 
 			<ResourceGroup key="Status" nameKey="117" instanced="false">
@@ -235,6 +265,14 @@
 				                   isProperty="false" defaultMonitored="true" unit="%"/>
 			</ResourceGroup>
 
+			<!-- Build 15 (issue #14): 1 connected, 0 not (device state). -->
+			<ResourceGroup key="Status" nameKey="175" instanced="false">
+				<ResourceAttribute key="state" nameKey="176" dataType="float"
+				                   isProperty="false" defaultMonitored="true"/>
+				<!-- Build 15 (peer review 5): the state's short name. -->
+				<ResourceAttribute key="state_code" nameKey="177" dataType="string" isProperty="true"/>
+			</ResourceGroup>
+
 			<ResourceGroup key="Configuration" nameKey="168" instanced="false">
 				<ResourceAttribute key="model" nameKey="169" dataType="string" isProperty="true"/>
 				<ResourceAttribute key="firmware" nameKey="170" dataType="string" isProperty="true"/>
@@ -274,6 +312,11 @@
 				                   isProperty="false" defaultMonitored="true" unit="bytes"/>
 				<ResourceAttribute key="rx_bytes" nameKey="192" dataType="float"
 				                   isProperty="false" defaultMonitored="true" unit="bytes"/>
+				<!-- Build 15 (issue #29): UniFi's own rate fields (tx_bytes-r / rx_bytes-r). -->
+				<ResourceAttribute key="tx_rate" nameKey="199" dataType="float"
+				                   isProperty="false" defaultMonitored="true" unit="bytes/s"/>
+				<ResourceAttribute key="rx_rate" nameKey="200" dataType="float"
+				                   isProperty="false" defaultMonitored="true" unit="bytes/s"/>
 			</ResourceGroup>
 
 			<ResourceGroup key="Configuration" nameKey="193" instanced="false">
@@ -337,7 +380,9 @@
 				<ResourceAttribute key="firmware" nameKey="240" dataType="string" isProperty="true"/>
 				<ResourceAttribute key="name" nameKey="241" dataType="string" isProperty="true"/>
 				<ResourceAttribute key="host_type" nameKey="242" dataType="string" isProperty="true"/>
-				<ResourceAttribute key="recording_retention_mode" nameKey="243" dataType="string" isProperty="true"/>
+				<!-- Build 15 (issue #16): replaces recording_retention_mode. -->
+				<ResourceAttribute key="recording_retention_days" nameKey="243" dataType="float"
+				                   isProperty="true"/>
 				<ResourceAttribute key="camera_count" nameKey="244" dataType="string" isProperty="true"/>
 			</ResourceGroup>
 		</ResourceKind>
@@ -351,7 +396,8 @@
 			<ResourceGroup key="Status" nameKey="252" instanced="false">
 				<ResourceAttribute key="uptime" nameKey="253" dataType="float"
 				                   isProperty="false" defaultMonitored="true" unit="sec"/>
-				<ResourceAttribute key="last_motion" nameKey="254" dataType="float"
+				<!-- Build 15 (issue #16): replaces last_motion (epoch, not an age). -->
+				<ResourceAttribute key="seconds_since_last_motion" nameKey="254" dataType="float"
 				                   isProperty="false" defaultMonitored="false" unit="sec"/>
 				<ResourceAttribute key="state" nameKey="255" dataType="string" isProperty="true"/>
 				<ResourceAttribute key="is_connected" nameKey="256" dataType="string" isProperty="true"/>

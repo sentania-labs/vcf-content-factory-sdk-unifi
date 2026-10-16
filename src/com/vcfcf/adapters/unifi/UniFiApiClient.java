@@ -45,11 +45,30 @@ public final class UniFiApiClient {
 	}
 
 	public SimpleJson statDevice(String site) throws IOException, InterruptedException {
-		return get("/proxy/network/api/s/" + site + "/stat/device");
+		return get(sitePath(site, "stat/device"));
 	}
 
 	public SimpleJson statHealth(String site) throws IOException, InterruptedException {
-		return get("/proxy/network/api/s/" + site + "/stat/health");
+		return get(sitePath(site, "stat/health"));
+	}
+
+	/**
+	 * Build 15 (issue #18): controller information for the site, read for
+	 * the site's {@code version} (Network application) and {@code timezone}
+	 * properties. Envelope {@code {meta, data:[{...}]}}, one element.
+	 */
+	public SimpleJson statSysinfo(String site) throws IOException, InterruptedException {
+		return get(sitePath(site, "stat/sysinfo"));
+	}
+
+	/**
+	 * Build 15 (issue #22): the site name comes from {@code /self/sites} and
+	 * is percent-encoded as one path segment, so a reserved character in it
+	 * cannot change which path is requested (as {@link UniFiStitcher} already
+	 * encodes its path segments). Ordinary site names are unchanged.
+	 */
+	static String sitePath(String site, String resource) {
+		return "/proxy/network/api/s/" + UniFiIds.pathSegment(site) + "/" + resource;
 	}
 
 	// --- Protect API ---
@@ -63,8 +82,11 @@ public final class UniFiApiClient {
 	private SimpleJson get(String path) throws IOException, InterruptedException {
 		HttpResponse<String> resp = http.get(path, HttpResponse.BodyHandlers.ofString());
 		if (resp.statusCode() != 200) {
-			throw new IOException("UniFi GET " + redact(path) + " returned HTTP "
-					+ resp.statusCode());
+			// Build 14 (issue #11): typed, so a 401/403/429 is recognized by
+			// status, not by message text.
+			throw new UniFiHttpException("UniFi GET " + redact(path)
+					+ " returned HTTP " + resp.statusCode(), resp.statusCode(),
+					false);
 		}
 		return SimpleJson.parse(resp.body());
 	}
@@ -79,7 +101,8 @@ public final class UniFiApiClient {
 				"application/json", HttpResponse.BodyHandlers.ofString());
 		if (resp.statusCode() != 200) {
 			// Status only — never echo the request body (plaintext password).
-			throw new IOException("UniFi login failed: HTTP " + resp.statusCode());
+			throw new UniFiHttpException("UniFi login failed: HTTP "
+					+ resp.statusCode(), resp.statusCode(), true);
 		}
 		// UniFi OS sets TOKEN; classic controllers set unifises.
 		String token = extractCookie(resp, "TOKEN");

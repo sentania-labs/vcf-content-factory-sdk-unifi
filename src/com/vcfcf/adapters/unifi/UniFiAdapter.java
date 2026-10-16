@@ -765,6 +765,64 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		out.add(new MetricData(new MetricKey(key), System.currentTimeMillis(), value));
 	}
 
+	/**
+	 * Build 15 (issue #14): publishes the field only when it is present and
+	 * a number (see {@link UniFiValues#number}); never 0.0 for an absent or
+	 * unreadable field, which is what {@code SimpleJson.asDouble()} returns.
+	 */
+	private static void metricIfPresent(List<MetricData> out, String key,
+			SimpleJson field) {
+		metricIfPresent(out, key, UniFiValues.number(field.asString()));
+	}
+
+	/** Build 15 (issue #14): publishes {@code value} unless it is null. */
+	private static void metricIfPresent(List<MetricData> out, String key,
+			Double value) {
+		if (value != null) metric(out, key, value);
+	}
+
+	/**
+	 * Build 15 (issue #14): a satisfaction score, skipped when absent or
+	 * -1 (UniFi's "no data"); see {@link UniFiValues#satisfaction}.
+	 */
+	private static void satisfactionIfPresent(List<MetricData> out, String key,
+			SimpleJson field) {
+		metricIfPresent(out, key, UniFiValues.satisfaction(field.asString()));
+	}
+
+	/**
+	 * Build 15 (issue #14): whether a Network device is connected
+	 * ({@code state} 1), not ({@code state} anything else) or unknown
+	 * (no readable {@code state}, null).
+	 */
+	private static Boolean deviceConnected(SimpleJson dev) {
+		return UniFiValues.connected(dev.get("state").asString());
+	}
+
+	/**
+	 * Build 15 (issue #14): {@code Status|state} (1 connected, 0 not) for a
+	 * gateway, switch or access point, nothing when the state is unknown.
+	 * Returns whether its performance metrics are published: not when it
+	 * is known to be disconnected.
+	 */
+	private static boolean publishState(List<MetricData> out, SimpleJson dev) {
+		Boolean connected = deviceConnected(dev);
+		metricIfPresent(out, "Status|state", UniFiValues.stateMetric(connected));
+		return UniFiValues.publishesPerformance(connected);
+	}
+
+	/**
+	 * Build 15 (issue #14): the {@code system-stats} block shared by the
+	 * gateway, switch and access point. UDM sends cpu and mem as strings.
+	 */
+	private static void systemStats(List<MetricData> out, SimpleJson dev) {
+		SimpleJson ss = dev.get("system-stats");
+		metricIfPresent(out, "System|cpu_pct", ss.get("cpu"));
+		metricIfPresent(out, "System|mem_pct", ss.get("mem"));
+		metricIfPresent(out, "System|uptime", dev.get("uptime"));
+		metricIfPresent(out, "System|num_sta", dev.get("num_sta"));
+	}
+
 	private static void prop(List<MetricData> out, String key, String value) {
 		out.add(new MetricData(new MetricKey(true, key),
 				System.currentTimeMillis(), value != null ? value : ""));
@@ -816,31 +874,24 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 			return;
 		}
 
-		// UDM system-stats are STRINGS — coerce.
-		SimpleJson ss = dev.get("system-stats");
-		if (!ss.isNull()) {
-			metric(out, "System|cpu_pct", parseDouble(ss.get("cpu").asString("0")));
-			metric(out, "System|mem_pct", parseDouble(ss.get("mem").asString("0")));
-		}
-		metric(out, "System|uptime", dev.get("uptime").asDouble());
-		metric(out, "System|num_sta", dev.get("num_sta").asDouble());
+		// Build 15 (issue #14): state first; a disconnected gateway
+		// publishes state and properties only, and every metric is
+		// published only when its field is present.
+		if (publishState(out, dev)) {
+			systemStats(out, dev);
 
-		SimpleJson temps = dev.get("temperatures");
-		if (!temps.isNull()) {
-			for (SimpleJson t : temps.asList()) {
+			for (SimpleJson t : dev.get("temperatures").asList()) {
 				String tName = t.get("name").asString("");
-				double tValue = t.get("value").asDouble();
-				if ("CPU".equals(tName)) metric(out, "Temperature|temp_cpu", tValue);
-				else if ("Local".equals(tName)) metric(out, "Temperature|temp_local", tValue);
-				else if ("PHY".equals(tName)) metric(out, "Temperature|temp_phy", tValue);
+				SimpleJson tValue = t.get("value");
+				if ("CPU".equals(tName)) metricIfPresent(out, "Temperature|temp_cpu", tValue);
+				else if ("Local".equals(tName)) metricIfPresent(out, "Temperature|temp_local", tValue);
+				else if ("PHY".equals(tName)) metricIfPresent(out, "Temperature|temp_phy", tValue);
 			}
-		}
 
-		SimpleJson st = dev.get("speedtest-status");
-		if (!st.isNull()) {
-			metric(out, "Speedtest|xput_up", st.get("xput_upload").asDouble());
-			metric(out, "Speedtest|xput_down", st.get("xput_download").asDouble());
-			metric(out, "Speedtest|speedtest_latency", st.get("latency").asDouble());
+			SimpleJson st = dev.get("speedtest-status");
+			metricIfPresent(out, "Speedtest|xput_up", st.get("xput_upload"));
+			metricIfPresent(out, "Speedtest|xput_down", st.get("xput_download"));
+			metricIfPresent(out, "Speedtest|speedtest_latency", st.get("latency"));
 		}
 
 		prop(out, "Configuration|model", dev.get("model").asString(""));
@@ -872,11 +923,15 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 			return;
 		}
 
-		metric(out, "Traffic|tx_bytes", wan.get("tx_bytes").asDouble());
-		metric(out, "Traffic|rx_bytes", wan.get("rx_bytes").asDouble());
-		metric(out, "Health|latency", wan.get("latency").asDouble());
-		metric(out, "Health|availability", wan.get("availability").asDouble());
-		metric(out, "Health|speed", wan.get("speed").asDouble());
+		// Build 15 (issue #14): none of the WAN's metrics while its gateway
+		// is disconnected; otherwise each only when present.
+		if (UniFiValues.publishesPerformance(deviceConnected(dev))) {
+			metricIfPresent(out, "Traffic|tx_bytes", wan.get("tx_bytes"));
+			metricIfPresent(out, "Traffic|rx_bytes", wan.get("rx_bytes"));
+			metricIfPresent(out, "Health|latency", wan.get("latency"));
+			metricIfPresent(out, "Health|availability", wan.get("availability"));
+			metricIfPresent(out, "Health|speed", wan.get("speed"));
+		}
 
 		prop(out, "Configuration|type", wan.get("type").asString(""));
 		prop(out, "Configuration|ip", wan.get("ip").asString(""));
@@ -902,18 +957,19 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 			return;
 		}
 
-		SimpleJson ss = dev.get("system-stats");
-		if (!ss.isNull()) {
-			metric(out, "System|cpu_pct", parseDouble(ss.get("cpu").asString("0")));
-			metric(out, "System|mem_pct", parseDouble(ss.get("mem").asString("0")));
+		// Build 15 (issue #14): state first; a disconnected switch
+		// publishes state and properties only.
+		boolean perf = publishState(out, dev);
+		if (perf) {
+			systemStats(out, dev);
+			satisfactionIfPresent(out, "System|satisfaction", dev.get("satisfaction"));
 		}
-		metric(out, "System|uptime", dev.get("uptime").asDouble());
-		metric(out, "System|num_sta", dev.get("num_sta").asDouble());
-		metric(out, "System|satisfaction", dev.get("satisfaction").asDouble());
 
-		double maxPower = dev.get("total_max_power").asDouble();
-		boolean poeCapable = maxPower > 0;
-		metric(out, "PoE|total_max_power", maxPower);
+		// total_max_power is null on a non-PoE switch: no PoE budget metrics
+		// then (before build 15 they were published as 0).
+		Double maxPower = UniFiValues.number(dev.get("total_max_power").asString());
+		boolean poeCapable = maxPower != null && maxPower > 0;
+		if (perf) metricIfPresent(out, "PoE|total_max_power", maxPower);
 
 		prop(out, "Configuration|model", dev.get("model").asString(""));
 		prop(out, "Configuration|firmware", dev.get("version").asString(""));
@@ -925,21 +981,30 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		prop(out, "Configuration|has_fan",
 				dev.get("has_fan").asBoolean() ? "true" : "false");
 
-		// PoE budget — sum each port's draw (same fields collectSwitchPort reads).
+		// PoE budget: sum each PoE port's draw (same fields collectSwitchPort
+		// reads). Build 15 (issue #14): published only when at least one PoE
+		// port reports its draw, and the remaining budget only when the
+		// switch reports its maximum too.
 		SimpleJson ports = dev.get("port_table");
-		int portCount = 0;
+		int portCount = ports.isNull() ? 0 : ports.size();
 		double poeConsumption = 0;
-		if (!ports.isNull()) {
-			portCount = ports.size();
-			for (SimpleJson port : ports.asList()) {
-				if (port.get("port_poe").asBoolean()) {
-					poeConsumption += parseDouble(port.get("poe_power").asString("0"));
+		boolean poeReported = false;
+		for (SimpleJson port : ports.asList()) {
+			if (port.get("port_poe").asBoolean()) {
+				Double draw = UniFiValues.number(port.get("poe_power").asString());
+				if (draw != null) {
+					poeConsumption += draw;
+					poeReported = true;
 				}
 			}
 		}
 		prop(out, "Configuration|port_count", String.valueOf(portCount));
-		metric(out, "PoE|poe_consumption", poeConsumption);
-		metric(out, "PoE|poe_budget_remaining", maxPower - poeConsumption);
+		if (perf && poeReported) {
+			metric(out, "PoE|poe_consumption", poeConsumption);
+			if (maxPower != null) {
+				metric(out, "PoE|poe_budget_remaining", maxPower - poeConsumption);
+			}
+		}
 	}
 
 	private void collectSwitchPort(ResourceConfig rc, Snapshot s, List<MetricData> out)
@@ -963,13 +1028,27 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 			return;
 		}
 
-		metric(out, "Traffic|tx_bytes", port.get("tx_bytes").asDouble());
-		metric(out, "Traffic|rx_bytes", port.get("rx_bytes").asDouble());
-		metric(out, "Traffic|tx_errors", port.get("tx_errors").asDouble());
-		metric(out, "Traffic|rx_errors", port.get("rx_errors").asDouble());
+		// Build 15 (issue #14): none of the port's metrics while its switch
+		// is disconnected; otherwise each only when present.
+		boolean perf = UniFiValues.publishesPerformance(deviceConnected(dev));
+		if (perf) {
+			metricIfPresent(out, "Traffic|tx_bytes", port.get("tx_bytes"));
+			metricIfPresent(out, "Traffic|rx_bytes", port.get("rx_bytes"));
+			metricIfPresent(out, "Traffic|tx_errors", port.get("tx_errors"));
+			metricIfPresent(out, "Traffic|rx_errors", port.get("rx_errors"));
 
-		metric(out, "Status|satisfaction", port.get("satisfaction").asDouble());
-		metric(out, "Status|mac_table_count", (double) port.get("mac_table").size());
+			satisfactionIfPresent(out, "Status|satisfaction", port.get("satisfaction"));
+			// The size of mac_table when the port carries the list, else the
+			// controller's own mac_table_count; neither present, nothing
+			// (before build 15 a port without mac_table read 0).
+			SimpleJson macTable = port.get("mac_table");
+			if (macTable.isList()) {
+				metric(out, "Status|mac_table_count", macTable.size());
+			} else {
+				metricIfPresent(out, "Status|mac_table_count",
+						port.get("mac_table_count"));
+			}
+		}
 		prop(out, "Status|up", port.get("up").asBoolean() ? "true" : "false");
 		prop(out, "Status|speed", String.valueOf(port.get("speed").asLong()));
 		prop(out, "Status|duplex",
@@ -981,10 +1060,13 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		prop(out, "Status|port_name", port.get("name").asString(""));
 
 		if (port.get("port_poe").asBoolean()) {
-			// poe_power / voltage / current are STRINGS — coerce.
-			metric(out, "PoE|poe_power", parseDouble(port.get("poe_power").asString("0")));
-			metric(out, "PoE|poe_voltage", parseDouble(port.get("poe_voltage").asString("0")));
-			metric(out, "PoE|poe_current", parseDouble(port.get("poe_current").asString("0")));
+			// poe_power / voltage / current are strings; parsed, and
+			// published only when present (build 15, issue #14).
+			if (perf) {
+				metricIfPresent(out, "PoE|poe_power", port.get("poe_power"));
+				metricIfPresent(out, "PoE|poe_voltage", port.get("poe_voltage"));
+				metricIfPresent(out, "PoE|poe_current", port.get("poe_current"));
+			}
 			prop(out, "PoE|poe_enable",
 					port.get("poe_enable").asBoolean() ? "true" : "false");
 			prop(out, "PoE|poe_class", port.get("poe_class").asString(""));
@@ -1017,14 +1099,12 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 			return;
 		}
 
-		SimpleJson ss = dev.get("system-stats");
-		if (!ss.isNull()) {
-			metric(out, "System|cpu_pct", parseDouble(ss.get("cpu").asString("0")));
-			metric(out, "System|mem_pct", parseDouble(ss.get("mem").asString("0")));
+		// Build 15 (issue #14): state first; a disconnected access point
+		// publishes state and properties only.
+		if (publishState(out, dev)) {
+			systemStats(out, dev);
+			satisfactionIfPresent(out, "System|satisfaction", dev.get("satisfaction"));
 		}
-		metric(out, "System|uptime", dev.get("uptime").asDouble());
-		metric(out, "System|num_sta", dev.get("num_sta").asDouble());
-		metric(out, "System|satisfaction", dev.get("satisfaction").asDouble());
 
 		prop(out, "Configuration|model", dev.get("model").asString(""));
 		prop(out, "Configuration|firmware", dev.get("version").asString(""));
@@ -1055,23 +1135,26 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 			return;
 		}
 
-		metric(out, "RF|channel", radio.get("channel").asDouble());
-		metric(out, "RF|tx_power", radio.get("tx_power").asDouble());
-		metric(out, "RF|cu_total", radio.get("cu_total").asDouble());
-		metric(out, "RF|satisfaction", radio.get("satisfaction").asDouble());
-		metric(out, "RF|tx_retries_pct", radio.get("tx_retries_pct").asDouble());
+		// Build 15 (issue #14): none of the radio's metrics while its access
+		// point is disconnected; otherwise each only when present.
+		boolean perf = UniFiValues.publishesPerformance(deviceConnected(dev));
+		if (perf) {
+			metricIfPresent(out, "RF|channel", radio.get("channel"));
+			metricIfPresent(out, "RF|tx_power", radio.get("tx_power"));
+			metricIfPresent(out, "RF|cu_total", radio.get("cu_total"));
+			satisfactionIfPresent(out, "RF|satisfaction", radio.get("satisfaction"));
+			metricIfPresent(out, "RF|tx_retries_pct", radio.get("tx_retries_pct"));
 
-		metric(out, "Clients|user_num_sta", radio.get("user-num_sta").asDouble());
+			metricIfPresent(out, "Clients|user_num_sta", radio.get("user-num_sta"));
+		}
 
 		String radioName = radio.get("name").asString("");
-		if (!radioName.isEmpty()) {
+		if (perf && !radioName.isEmpty()) {
 			SimpleJson statAp = dev.get("stat").get("ap");
-			if (!statAp.isNull()) {
-				metric(out, "Traffic|tx_bytes",
-						statAp.get(radioName + "-tx_bytes").asDouble());
-				metric(out, "Traffic|rx_bytes",
-						statAp.get(radioName + "-rx_bytes").asDouble());
-			}
+			metricIfPresent(out, "Traffic|tx_bytes",
+					statAp.get(radioName + "-tx_bytes"));
+			metricIfPresent(out, "Traffic|rx_bytes",
+					statAp.get(radioName + "-rx_bytes"));
 		}
 
 		prop(out, "Configuration|radio_type", radioCode);
@@ -1106,13 +1189,14 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		}
 		for (SimpleJson sub : health.get("data").asList()) {
 			if (!"wlan".equals(sub.get("subsystem").asString(""))) continue;
-			metric(out, "Clients|num_user", sub.get("num_user").asDouble());
-			metric(out, "Clients|num_guest", sub.get("num_guest").asDouble());
-			metric(out, "Clients|num_iot", sub.get("num_iot").asDouble());
-			metric(out, "Clients|num_disconnected", sub.get("num_disconnected").asDouble());
-			metric(out, "Performance|num_ap", sub.get("num_ap").asDouble());
-			metric(out, "Performance|tx_bytes_r", sub.get("tx_bytes-r").asDouble());
-			metric(out, "Performance|rx_bytes_r", sub.get("rx_bytes-r").asDouble());
+			// Build 15 (issue #14): each only when present.
+			metricIfPresent(out, "Clients|num_user", sub.get("num_user"));
+			metricIfPresent(out, "Clients|num_guest", sub.get("num_guest"));
+			metricIfPresent(out, "Clients|num_iot", sub.get("num_iot"));
+			metricIfPresent(out, "Clients|num_disconnected", sub.get("num_disconnected"));
+			metricIfPresent(out, "Performance|num_ap", sub.get("num_ap"));
+			metricIfPresent(out, "Performance|tx_bytes_r", sub.get("tx_bytes-r"));
+			metricIfPresent(out, "Performance|rx_bytes_r", sub.get("rx_bytes-r"));
 			break;
 		}
 	}
@@ -1128,18 +1212,22 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 			return;
 		}
 
-		double upSince = nvr.get("upSince").asDouble();
-		metric(out, "System|uptime", upSince > 0
-				? (System.currentTimeMillis() / 1000.0) - (upSince / 1000.0)
-				: 0);
+		// Build 15 (issue #14): uptime only when upSince is present (it was
+		// published as 0 when absent); storage values only when present,
+		// usage only when both are and the total is not 0.
+		Double upSince = UniFiValues.number(nvr.get("upSince").asString());
+		if (upSince != null && upSince > 0) {
+			metric(out, "System|uptime",
+					(System.currentTimeMillis() / 1000.0) - (upSince / 1000.0));
+		}
 
 		SimpleJson storage = nvr.get("storageInfo");
-		if (!storage.isNull()) {
-			double total = storage.get("totalSize").asDouble();
-			double used = storage.get("usedSize").asDouble();
-			metric(out, "Storage|total_bytes", total);
-			metric(out, "Storage|used_bytes", used);
-			metric(out, "Storage|usage_pct", total > 0 ? (used / total) * 100.0 : 0);
+		Double total = UniFiValues.number(storage.get("totalSize").asString());
+		Double used = UniFiValues.number(storage.get("usedSize").asString());
+		metricIfPresent(out, "Storage|total_bytes", total);
+		metricIfPresent(out, "Storage|used_bytes", used);
+		if (total != null && used != null && total > 0) {
+			metric(out, "Storage|usage_pct", (used / total) * 100.0);
 		}
 
 		prop(out, "Configuration|model", nvr.get("modelKey").asString(""));
@@ -1163,7 +1251,9 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		}
 
 		// Protect uptime / lastMotion are milliseconds — normalize to seconds.
-		metric(out, "Status|uptime", cam.get("uptime").asLong() / 1000.0);
+		// Build 15 (issue #14): uptime only when present.
+		Double camUptime = UniFiValues.number(cam.get("uptime").asString());
+		if (camUptime != null) metric(out, "Status|uptime", camUptime / 1000.0);
 		long lastMotion = cam.get("lastMotion").asLong();
 		if (lastMotion > 0) {
 			metric(out, "Status|last_motion", lastMotion / 1000.0);
@@ -1421,14 +1511,6 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 			if (radioCode.equals(radio.get("radio").asString(""))) return radio;
 		}
 		return null;
-	}
-
-	private static double parseDouble(String s) {
-		try {
-			return Double.parseDouble(s);
-		} catch (NumberFormatException e) {
-			return 0;
-		}
 	}
 
 	private static int parseInt(String s) {

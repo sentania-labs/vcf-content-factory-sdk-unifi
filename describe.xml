@@ -70,6 +70,12 @@
 				                   isProperty="false" defaultMonitored="true"/>
 			</ResourceGroup>
 
+			<!-- Build 15 (issue #14): 1 connected, 0 not (device state). -->
+			<ResourceGroup key="Status" nameKey="52" instanced="false">
+				<ResourceAttribute key="state" nameKey="53" dataType="float"
+				                   isProperty="false" defaultMonitored="true"/>
+			</ResourceGroup>
+
 			<ResourceGroup key="Temperature" nameKey="37" instanced="false">
 				<ResourceAttribute key="temp_cpu" nameKey="38" dataType="float"
 				                   isProperty="false" defaultMonitored="true" unit="C"/>
@@ -146,6 +152,12 @@
 				                   isProperty="false" defaultMonitored="true"/>
 				<ResourceAttribute key="satisfaction" nameKey="87" dataType="float"
 				                   isProperty="false" defaultMonitored="true" unit="%"/>
+			</ResourceGroup>
+
+			<!-- Build 15 (issue #14): 1 connected, 0 not (device state). -->
+			<ResourceGroup key="Status" nameKey="102" instanced="false">
+				<ResourceAttribute key="state" nameKey="103" dataType="float"
+				                   isProperty="false" defaultMonitored="true"/>
 			</ResourceGroup>
 
 			<ResourceGroup key="PoE" nameKey="88" instanced="false">
@@ -236,6 +248,12 @@
 				                   isProperty="false" defaultMonitored="true"/>
 				<ResourceAttribute key="satisfaction" nameKey="167" dataType="float"
 				                   isProperty="false" defaultMonitored="true" unit="%"/>
+			</ResourceGroup>
+
+			<!-- Build 15 (issue #14): 1 connected, 0 not (device state). -->
+			<ResourceGroup key="Status" nameKey="175" instanced="false">
+				<ResourceAttribute key="state" nameKey="176" dataType="float"
+				                   isProperty="false" defaultMonitored="true"/>
 			</ResourceGroup>
 
 			<ResourceGroup key="Configuration" nameKey="168" instanced="false">

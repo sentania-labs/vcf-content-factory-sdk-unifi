@@ -1,4 +1,4 @@
-# VCF Content Factory UniFi Controller — Reference
+# VCF Content Factory UniFi Controller: Reference
 
 Generated from `describe.xml` and `resources.properties` for build 15 (dev 0.0.0.15).
 
@@ -222,12 +222,12 @@ Generated from `describe.xml` and `resources.properties` for build 15 (dev 0.0.0
 > own `port_table[].lldp_table` is empty on Network App 10.2.105 (see
 > `context/investigations/unifi-lldp-switchport-esxi-2026-07-05.md`), so these
 > two properties are now populated from the vCenter-side vmnic→port join
-> (`net:vmnic<N>|discoveryProtocol|lldp|*` on the matched VMWARE HostSystem) —
+> (`net:vmnic<N>|discoveryProtocol|lldp|*` on the matched VMWARE HostSystem):
 > the same join that emits the `HostSystem → UniFiSwitchPort` foreign
 > relationship edge. `lldp_chassis_id` had no honest source under either
 > design and is removed. Build 11: if two *different* hosts both claim the
 > same switch port as an LLDP neighbour in the same collect cycle
-> (contradictory data), the property is written for neither claimant —
+> (contradictory data), the property is written for neither claimant:
 > the portKey is marked conflicted for the rest of that cycle and the
 > conflict is counted in the adapter's per-cycle stitch summary log line.
 > The `HostSystem → UniFiSwitchPort` relationship edge is unaffected and

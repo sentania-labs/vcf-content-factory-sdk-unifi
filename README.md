@@ -1,6 +1,6 @@
 # VCF Content Factory UniFi Controller
 
-Monitors UniFi infrastructure via the classic Network API and Protect API. Discovers sites, gateways, switches, access points, NVR, and cameras. Per-switch-port and per-AP-radio child objects with PoE tracking. LLDP-based stitching to ESXi hosts. Replaces the Tier 1 UniFi Network and UniFi Network Integration management packs.
+Monitors UniFi infrastructure via the classic Network API and Protect API. Discovers sites, gateways, switches, access points, NVR, and cameras. Per-switch-port and per-AP-radio child objects with PoE tracking. Switch ports are linked to the ESXi hosts cabled to them from the vCenter side: each host's vmnic LLDP neighbour (published by vCenter) is matched to the UniFi switch and port, read over the VCF Operations Suite API on the collector (optional; skipped where the collector has no local Suite API access). Replaces the Tier 1 UniFi Network and UniFi Network Integration management packs.
 
 ## Documentation
 
@@ -8,11 +8,11 @@ Full docset (overview, installing & configuring, inventory tree): [`docs/README.
 
 ## Installation
 
-Upload the `.pak` file via **Administration → Solutions** in VCF Operations.
+Upload the `.pak` file via **Administration > Integrations > Repository > Add** in VCF Operations (9.x; on 8.x, **Data Sources > Integrations > Repository**).
 
 ## Configuration
 
-Create an adapter instance under **Integrations → Repository** and provide:
+Create an adapter instance under **Administration > Integrations > Accounts > Add Account** (9.x; on 8.x, **Data Sources > Integrations > Accounts**) and provide:
 
 | Field | Description | Default |
 |---|---|---|

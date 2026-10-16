@@ -10,9 +10,13 @@ NVRs and cameras — and breaks switches and APs down to per-port and
 per-radio child objects with PoE tracking. It replaces the Tier 1 UniFi
 Network and UniFi Network Integration management packs.
 
-Each cycle the adapter performs one UniFi Network / Protect pull into a
-per-cycle snapshot and emits the full topology and metrics, with the
-controller-wide picture anchored on the World resource.
+Each cycle the adapter performs one UniFi Network pull into a per-cycle
+snapshot and emits the full topology and metrics, with the controller-wide
+picture anchored on the World resource. The Protect bootstrap is fetched
+every cycle too; when that fetch fails, Protect is absent for the cycle and
+the NVR and cameras publish nothing that cycle. The vmnic stitch's Suite
+API host list changes rarely and is fetched at most every 15 minutes
+(build 15, issue #21).
 
 ### Resource kinds
 
@@ -40,6 +44,27 @@ Roughly 130 metric and property keys across the eleven kinds (see
 `REFERENCE.md` for the authoritative list): device CPU / memory / uptime,
 per-WAN throughput, per-switch-port traffic and PoE draw, per-radio channel
 utilization and client counts, and the Protect NVR / camera state.
+
+Build 15 changes to the metric set:
+
+- **New `Status|state`** on the gateway, switch and access point: 1 when
+  the device is connected, 0 when it is not (disconnected, upgrading,
+  provisioning and so on), and **new `Status|state_code`**, a property
+  naming the state: disconnected, connected, pending adoption, upgrading,
+  provisioning, heartbeat missed, adopting, inform error, or the number
+  for any other code.
+- **New `Traffic|tx_rate` / `rx_rate`** (bytes/s) on switch ports, radios
+  and WAN interfaces, from UniFi's own `tx_bytes-r` / `rx_bytes-r` rate
+  fields. `Traffic|tx_bytes` / `rx_bytes` stay, and are cumulative
+  counters since the device's counter reset (the WAN ones were mislabelled
+  bytes/s before build 15). Use the rate keys for throughput charts. The
+  radio rate field is not yet confirmed on a live controller, so a radio
+  may publish no rate.
+- **Renamed:** camera `Status|last_motion` (an epoch timestamp) is now
+  `Status|seconds_since_last_motion` (time since the last motion), and NVR
+  `Configuration|recording_retention_mode` (the raw milliseconds as text)
+  is now the numeric `Configuration|recording_retention_days`. The old
+  keys stop updating and keep their last value.
 
 ## Cross-Adapter Behavior
 
@@ -74,7 +99,18 @@ HostSystem resources and reads their properties over the local VCF
 Operations Suite API using the collector's ambient credentials. When the
 Suite API is unavailable, or a fetch/match fails, the stitch is skipped
 (WARN once) and all UniFi resources collect normally — collection is
-never failed over the optional cross-link. Zero or ambiguous
+never failed over the optional cross-link.
+
+Since build 15 (issue #21) the host list and the hosts' LLDP properties
+are fetched at most every 15 minutes, the properties in bulk (one Suite
+API request per 50 hosts, `GET /api/resources/properties?resourceId=..`,
+instead of one per host), and the result is reused between fetches; the
+join against the UniFi inventory still runs every cycle. A batch the bulk
+request cannot read is read one host at a time, as before (one WARN per
+batch). A failed fetch reuses the last good host list, with a WARN, for up
+to an hour after it was fetched; past that the stitch is skipped until the
+Suite API answers again. A new vmnic cabling change therefore shows within
+about 15 minutes. Zero or ambiguous
 `(switch, port)` matches are legitimate (no fabricated edges, ever) and
 are counted in a one-line INFO summary each cycle; per-pair misses are
 logged at debug only, never WARN spam.
@@ -98,6 +134,38 @@ logged at debug only, never WARN spam.
 > dropped at persist time).
 
 ## Notable Behaviors
+
+- **A gap means not reported, never a fake 0** (build 15). A metric is
+  published only when the controller sends its field as a number; before
+  build 15 a missing field was published as 0 (0% CPU, 0 clients, 0
+  satisfaction). A satisfaction of -1, UniFi's "no data", is not
+  published. A gateway, switch or access point that is not informing the
+  controller (any state other than connected, upgrading, provisioning or
+  adopting; see Device state codes below) publishes `Status|state` = 0,
+  its state code and its properties, and no metrics; its switch ports,
+  radios and WAN interfaces publish no metrics either. So a blank stretch
+  on a device's CPU or traffic chart, with such a state code, means the
+  device was not reporting, not that collection broke. An upgrading,
+  provisioning or adopting device reads 0 on `Status|state` but keeps
+  publishing the metrics it reports. A device
+  whose state is not reported publishes no state and the metrics it does
+  report. Views, super metrics and averages that used to count those zeros
+  read differently from build 15 (averages that included offline zeros
+  rise).
+
+- **Records with no identity are skipped** (build 15). A device or camera
+  the controller reports without a MAC, a switch port without a
+  `port_idx` and a radio without a radio code (for example on a device
+  pending adoption) is not discovered, not related and not counted in the
+  site's Device Count or the NVR's Camera Count. A device pending adoption
+  (`adopted: false`) is not discovered or counted either until it is
+  adopted. An NVR without a MAC is
+  not registered either; its cameras still are, with no parent in the
+  tree. Device Count counts only gateways, switches and access points, the
+  types the pack discovers. Each skip is logged at DEBUG, and the `UniFi
+  API snapshot` INFO line ends with `skipped with no identity: <n>
+  devices, <n> ports, <n> radios, <n> cameras, <n> nvr` when any were
+  skipped.
 
 - **Session self-recovery on 401.** UniFi controller sessions expire on the
   server side. Build 5 bundles the framework jar that makes the session
@@ -174,6 +242,33 @@ logged at debug only, never WARN spam.
   enumerates its topology on the collect path (`discoverOnCollect()`), so a
   freshly created instance populates on its first collection cycle rather
   than waiting on a discovery task the platform may never invoke.
+
+### Device state codes
+
+The UniFi device `state` field (`stat/device`), as this pack reads it for
+`Status|state`, `Status|state_code` and whether metrics are published:
+
+| Code | `Status|state_code` | `Status|state` | Metrics published |
+|---|---|---|---|
+| 0 | disconnected | 0 | no |
+| 1 | connected | 1 | yes |
+| 2 | pending adoption | 0 | no |
+| 4 | upgrading | 0 | yes |
+| 5 | provisioning | 0 | yes |
+| 6 | heartbeat missed | 0 | no |
+| 7 | adopting | 0 | yes |
+| 9 | inform error | 0 | no |
+| any other | the number | 0 | no |
+| absent or not a whole number | (not published) | (not published) | yes, fields present |
+
+Source: codes 1 and 0 are recorded on the factory's lab controller
+(`knowledge/context/api-maps/unifi-network-api.md`, `stat_device.state`,
+"1=connected, 0=disconnected"; only 1 was observed). The other names are
+community-sourced (the device state values used by open-source UniFi
+clients) and not yet seen on a live controller; confirm on devel. Metrics
+publish only while the device is informing the controller (1, 4, 5, 7):
+in any other state the controller holds last values, which would
+otherwise publish as current.
 
 ## Known Limitations
 

@@ -165,27 +165,92 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 	private static final long AUTH_FAILURE_BACKOFF_MS = 15L * 60_000L;
 
 	/**
+	 * Build 15 (issue #21): the vmnic stitch's Suite API host list is
+	 * fetched at most this often and reused between fetches. LLDP
+	 * neighbours change rarely; before build 15 it was fetched on every
+	 * snapshot build (every cycle). The Protect bootstrap is not cached at
+	 * all: it is fetched every cycle, as in build 14, so camera state and
+	 * NVR storage are never older than one collection interval.
+	 */
+	private static final long SLOW_REFRESH_MS = 15L * 60_000L;
+
+	/**
+	 * Build 15 (issue #21): after a failed refresh the last good host list is
+	 * reused for at most this long after it was fetched; past it the failure
+	 * degrades as before (no stitch for the cycle).
+	 */
+	private static final long SLOW_MAX_STALE_MS = 60L * 60_000L;
+
+	/**
 	 * One configuration's API client, snapshot cache and the snapshot
 	 * cache's logger (immutable). The logger is resolved once in
 	 * configureAdapter and stored here: componentLogger resets the logger to
 	 * INFO on every call, so a per-failure lookup would make the cache's
 	 * DEBUG line unreachable even after an operator raised the level.
 	 * Codex P1: also the per-site stat/device cool-downs, so an instance
-	 * edit starts with none.
+	 * edit starts with none. Build 15 (issue #34): also the API client's
+	 * logger, resolved once per configure for the same reason and shared by
+	 * the client and its login callback.
 	 */
 	private static final class Configured {
 		final UniFiApiClient api;
+		final HttpClients clients;
+		final Logger apiLog;
 		final Logger snapshotLog;
+		final Logger inventoryLog;
 		final SnapshotCache<Snapshot> snapshots;
 		final SiteReads.Cooldowns siteCooldowns;
+		// Build 15 (issue #21): the host list is fetched at most every
+		// SLOW_REFRESH_MS. The Protect bootstrap has no cache (every cycle).
+		// Build 15 (peer review 4): stat/sysinfo back-off after a refusal.
+		final SysinfoGate sysinfoGate = new SysinfoGate(
+				System::currentTimeMillis, AUTH_FAILURE_BACKOFF_MS);
+		final RefreshCache<List<UniFiStitcher.ForeignHost>> vmnicHosts =
+				new RefreshCache<>(System::currentTimeMillis, SLOW_REFRESH_MS,
+						SLOW_MAX_STALE_MS);
 
-		Configured(UniFiApiClient api, Logger snapshotLog,
+		Configured(UniFiApiClient api, HttpClients clients, Logger apiLog,
+				Logger snapshotLog, Logger inventoryLog,
 				SnapshotCache<Snapshot> snapshots,
 				SiteReads.Cooldowns siteCooldowns) {
 			this.api = api;
+			this.clients = clients;
+			this.apiLog = apiLog;
 			this.snapshotLog = snapshotLog;
+			this.inventoryLog = inventoryLog;
 			this.snapshots = snapshots;
 			this.siteCooldowns = siteCooldowns;
+		}
+	}
+
+	/**
+	 * Build 15 (issue #24): the authenticated client and the raw client its
+	 * login callback posts the credentials with. Built and discarded as a
+	 * pair, so the login-only client never outlives the configuration or
+	 * the Test Connection that created it.
+	 */
+	private static final class HttpClients {
+		final ManagedHttpClient main;
+		final ManagedHttpClient login;
+
+		HttpClients(ManagedHttpClient main, ManagedHttpClient login) {
+			this.main = main;
+			this.login = login;
+		}
+
+		/** Discards both; a fault in one never skips the other. */
+		void discard() {
+			discardQuietly(main);
+			discardQuietly(login);
+		}
+
+		private static void discardQuietly(ManagedHttpClient c) {
+			if (c == null) return;
+			try {
+				c.discard();
+			} catch (RuntimeException ignored) {
+				// Release is best effort; nothing to report to the caller.
+			}
 		}
 	}
 
@@ -213,13 +278,26 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 			ResourceConfig resourceConfig) {
 		UniFiConfig cfg = buildConfig(resourceConfig);
 		this.config = cfg;
-		this.httpClient = buildHttpClient(cfg);
-		// Resolved once per configure, never per failure (see Configured).
+		// Build 15 (issue #24): release what the previous configuration
+		// built. VcfCfAdapter.onConfigure has already discarded the previous
+		// main client (this.httpClient); its login-only client and the Suite
+		// API stitcher are this adapter's to release.
+		discardConfigured();
+		// Resolved once per configure, never per failure or per login (see
+		// Configured; build 15, issue #34 for the API client's logger).
+		Logger apiLog = componentLogger(UniFiApiClient.class);
 		Logger snapshotLog = componentLogger(SnapshotCache.class);
+		// Build 15 (issue #23): DEBUG lines for devices, ports and cameras
+		// skipped for having no identity.
+		Logger inventoryLog = componentLogger(UniFiIds.class);
+		HttpClients clients = buildHttpClient(cfg, apiLog);
+		this.httpClient = clients.main;
 		this.configured = new Configured(
-				new UniFiApiClient(this.httpClient,
-						componentLogger(UniFiApiClient.class)),
+				new UniFiApiClient(clients.main, apiLog),
+				clients,
+				apiLog,
 				snapshotLog,
+				inventoryLog,
 				new SnapshotCache<>(System::currentTimeMillis,
 						MAX_SNAPSHOT_AGE_MS, FAILURE_RETRY_BACKOFF_MS,
 						AUTH_FAILURE_BACKOFF_MS, snapshotLog::debug),
@@ -265,19 +343,26 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		return new UniFiConfig(host, port, username, password, allowInsecure);
 	}
 
-	private ManagedHttpClient buildHttpClient(UniFiConfig cfg) {
+	/**
+	 * @param apiLog the API client's logger, resolved once by the caller
+	 *        (build 15, issue #34): the login callback runs on every login
+	 *        and must not look it up again, since each lookup resets the
+	 *        logger to INFO.
+	 * @return the authenticated client with the login-only client it uses
+	 *         (build 15, issue #24), so the caller discards both
+	 */
+	private HttpClients buildHttpClient(UniFiConfig cfg, Logger apiLog) {
 		// Raw client for the login round-trip (no auth strategy attached yet).
 		ManagedHttpClient rawHttp = baseBuilder(cfg).build();
 
 		// Session cookie auth: TOKEN cookie minted by POST /api/auth/login. The
-		// login closure captures only the raw client and the credentials; the
-		// password never leaves this client.
+		// login closure captures only the raw client, the logger and the
+		// credentials; the password never leaves this client.
 		SessionCookieAuth auth = new SessionCookieAuth("TOKEN",
-				() -> UniFiApiClient.login(rawHttp,
-						componentLogger(UniFiApiClient.class),
+				() -> UniFiApiClient.login(rawHttp, apiLog,
 						cfg.username, cfg.password));
 
-		return baseBuilder(cfg).auth(auth).build();
+		return new HttpClients(baseBuilder(cfg).auth(auth).build(), rawHttp);
 	}
 
 	private HttpClientBuilder baseBuilder(UniFiConfig cfg) {
@@ -338,10 +423,17 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 						+ "UniFi host/credentials to test");
 			}
 			UniFiConfig testCfg = buildConfig(rc);
-			ManagedHttpClient testHttp = buildHttpClient(testCfg);
+			// Build 15 (issue #34): one logger for the test client and its
+			// login callback. A configured instance reuses the one its
+			// configure resolved; a bare instance (the usual Test Connection
+			// caller) resolves it once here.
+			Configured c = this.configured;
+			Logger apiLog = c != null ? c.apiLog
+					: componentLogger(UniFiApiClient.class);
+			HttpClients testHttp = buildHttpClient(testCfg, apiLog);
 			try {
-				UniFiApiClient testApi = new UniFiApiClient(testHttp,
-						componentLogger(UniFiApiClient.class));
+				UniFiApiClient testApi = new UniFiApiClient(testHttp.main,
+						apiLog);
 				SimpleJson sites = testApi.listSites();
 				SimpleJson data = sites.get("data");
 				if (data.isNull() || !data.isList()) {
@@ -351,6 +443,7 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 				logInfo("Test OK: connected to " + testCfg.host + ", "
 						+ data.size() + " site(s)");
 			} finally {
+				// Build 15 (issue #24): the login-only client too.
 				testHttp.discard();
 			}
 		};
@@ -456,7 +549,14 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 
 			for (SimpleJson dev : s.devicesForSite(siteName).get("data").asList()) {
 				String type = dev.get("type").asString("");
-				String mac = dev.get("mac").asString();
+				// Build 15 (issue #23): no MAC, no identity; skipped here,
+				// in buildRelationships and in the snapshot index alike
+				// (Snapshot.build logs it at DEBUG).
+				String mac = deviceMac(dev);
+				if (mac == null) continue;
+				// Codex P2: a device pending adoption is not registered (the
+				// same rule as the site's Device Count; isDiscovered).
+				if (!isDiscovered(dev)) continue;
 				String name = deviceDisplayName(dev);
 
 				if (isGateway(type)) {
@@ -478,7 +578,8 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 					SimpleJson portTable = dev.get("port_table");
 					if (!portTable.isNull()) {
 						for (SimpleJson port : portTable.asList()) {
-							int idx = (int) port.get("port_idx").asLong();
+							Integer idx = portIdx(port);
+							if (idx == null) continue; // #23: never <mac>_0
 							sink.accept(rcOf("UniFiSwitchPort",
 									portDisplayName(port, idx),
 									"port_key", mac + "_" + idx));
@@ -491,7 +592,8 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 					SimpleJson radioStats = dev.get("radio_table_stats");
 					if (!radioStats.isNull()) {
 						for (SimpleJson radio : radioStats.asList()) {
-							String radioCode = radio.get("radio").asString("");
+							String radioCode = radioCode(radio);
+							if (radioCode == null) continue; // peer review 7
 							sink.accept(rcOf("UniFiRadio",
 									radioDisplayName(radioCode),
 									"radio_key", mac + "_" + radioCode));
@@ -510,13 +612,19 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		if (s.protect != null) {
 			SimpleJson nvr = s.protect.get("nvr");
 			if (!nvr.isNull()) {
-				sink.accept(rcOf("UniFiNvr", nvr.get("name").asString("NVR"),
-						"nvr_mac", nvr.get("mac").asString("")));
-				nvrs++;
+				// Peer review 7: an NVR with no MAC has no identity and is
+				// not registered; its cameras still are (their own MAC).
+				String nvrMac = UniFiIds.mac(nvr.get("mac").asString());
+				if (nvrMac != null) {
+					sink.accept(rcOf("UniFiNvr", nvr.get("name").asString("NVR"),
+							"nvr_mac", nvrMac));
+					nvrs++;
+				}
 				SimpleJson cams = s.protect.get("cameras");
 				if (!cams.isNull()) {
 					for (SimpleJson cam : cams.asList()) {
-						String camMac = cam.get("mac").asString();
+						String camMac = UniFiIds.mac(cam.get("mac").asString());
+						if (camMac == null) continue; // #23
 						sink.accept(rcOf("UniFiCamera",
 								cam.get("name").asString(camMac),
 								"camera_mac", camMac));
@@ -636,7 +744,7 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 					+ "configured");
 		}
 		return c.snapshots.get(
-				() -> Snapshot.build(c.api, c.siteCooldowns, this),
+				() -> Snapshot.build(c, this),
 				this::logWarn);
 	}
 
@@ -690,6 +798,77 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		out.add(new MetricData(new MetricKey(key), System.currentTimeMillis(), value));
 	}
 
+	/**
+	 * Build 15 (issue #14): publishes the field only when it is present and
+	 * a number (see {@link UniFiValues#number}); never 0.0 for an absent or
+	 * unreadable field, which is what {@code SimpleJson.asDouble()} returns.
+	 */
+	private static void metricIfPresent(List<MetricData> out, String key,
+			SimpleJson field) {
+		metricIfPresent(out, key, UniFiValues.number(field.asString()));
+	}
+
+	/** Build 15 (issue #14): publishes {@code value} unless it is null. */
+	private static void metricIfPresent(List<MetricData> out, String key,
+			Double value) {
+		if (value != null) metric(out, key, value);
+	}
+
+	/**
+	 * Build 15 (issue #14): a satisfaction score, skipped when absent or
+	 * -1 (UniFi's "no data"); see {@link UniFiValues#satisfaction}.
+	 */
+	private static void satisfactionIfPresent(List<MetricData> out, String key,
+			SimpleJson field) {
+		metricIfPresent(out, key, UniFiValues.satisfaction(field.asString()));
+	}
+
+	/**
+	 * Build 15 (issue #14, peer review 5): {@code Status|state} (1 connected,
+	 * 0 not) and {@code Status|state_code} (the state's short name) for a
+	 * gateway, switch or access point, nothing when the state is unknown.
+	 * Returns whether its performance metrics are published: only in an
+	 * informing state (1, 4, 5, 7) or an unknown one; see
+	 * {@link UniFiValues#publishesPerformance}.
+	 */
+	private static boolean publishState(List<MetricData> out, SimpleJson dev) {
+		String raw = dev.get("state").asString();
+		metricIfPresent(out, "Status|state",
+				UniFiValues.stateMetric(UniFiValues.connected(raw)));
+		String name = UniFiValues.stateName(raw);
+		if (name != null) prop(out, "Status|state_code", name);
+		return UniFiValues.publishesPerformance(raw);
+	}
+
+	/**
+	 * Build 15 (issue #14, peer review 5): whether a port, radio or WAN of
+	 * this device publishes metrics (the device's state decides).
+	 */
+	private static boolean devicePerformance(SimpleJson dev) {
+		return UniFiValues.publishesPerformance(dev.get("state").asString());
+	}
+
+	/**
+	 * Build 15 (issue #14): the {@code system-stats} block shared by the
+	 * gateway, switch and access point. UDM sends cpu and mem as strings.
+	 */
+	private static void systemStats(List<MetricData> out, SimpleJson dev) {
+		SimpleJson ss = dev.get("system-stats");
+		metricIfPresent(out, "System|cpu_pct", ss.get("cpu"));
+		metricIfPresent(out, "System|mem_pct", ss.get("mem"));
+		metricIfPresent(out, "System|uptime", dev.get("uptime"));
+		metricIfPresent(out, "System|num_sta", dev.get("num_sta"));
+	}
+
+	/**
+	 * Build 15 (issue #16): a numeric property (describe.xml
+	 * {@code dataType="float" isProperty="true"}).
+	 */
+	private static void numericProp(List<MetricData> out, String key, double value) {
+		out.add(new MetricData(new MetricKey(true, key),
+				System.currentTimeMillis(), value));
+	}
+
 	private static void prop(List<MetricData> out, String key, String value) {
 		out.add(new MetricData(new MetricKey(true, key),
 				System.currentTimeMillis(), value != null ? value : ""));
@@ -709,8 +888,27 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 			return;
 		}
 		prop(out, "Configuration|description", site.get("desc").asString(""));
-		prop(out, "Configuration|device_count",
-				String.valueOf(site.get("device_count").asLong()));
+		// Build 15 (issue #18): counted from this cycle's stat/device for the
+		// site (the site was read: requireSiteRead above), not read from the
+		// /self/sites entry. Review N8, peer review 6, Codex P2: counts
+		// exactly the devices discovery registers (isDiscovered: a gateway,
+		// switch or access point with a MAC, not pending adoption; a device
+		// without the "adopted" field counts as adopted).
+		int adopted = 0;
+		for (SimpleJson dev : s.devicesForSite(siteName).get("data").asList()) {
+			if (isDiscovered(dev)) adopted++;
+		}
+		prop(out, "Configuration|device_count", String.valueOf(adopted));
+		// Build 15 (issue #18): version (Network application) and timezone
+		// from stat/sysinfo, each published only when the controller sent
+		// it; absent when sysinfo could not be read this cycle.
+		SimpleJson info = s.sysinfo(); // the controller's (peer review 4)
+		if (info != null) {
+			String version = info.get("version").asString("");
+			if (!version.isEmpty()) prop(out, "Configuration|version", version);
+			String timezone = info.get("timezone").asString("");
+			if (!timezone.isEmpty()) prop(out, "Configuration|timezone", timezone);
+		}
 	}
 
 	private void collectGateway(ResourceConfig rc, Snapshot s, List<MetricData> out)
@@ -722,31 +920,25 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 			return;
 		}
 
-		// UDM system-stats are STRINGS — coerce.
-		SimpleJson ss = dev.get("system-stats");
-		if (!ss.isNull()) {
-			metric(out, "System|cpu_pct", parseDouble(ss.get("cpu").asString("0")));
-			metric(out, "System|mem_pct", parseDouble(ss.get("mem").asString("0")));
-		}
-		metric(out, "System|uptime", dev.get("uptime").asDouble());
-		metric(out, "System|num_sta", dev.get("num_sta").asDouble());
+		// Build 15 (issue #14): state first; a gateway not informing
+		// the controller (state other than 1, 4, 5, 7)
+		// publishes state and properties only, and every metric is
+		// published only when its field is present.
+		if (publishState(out, dev)) {
+			systemStats(out, dev);
 
-		SimpleJson temps = dev.get("temperatures");
-		if (!temps.isNull()) {
-			for (SimpleJson t : temps.asList()) {
+			for (SimpleJson t : dev.get("temperatures").asList()) {
 				String tName = t.get("name").asString("");
-				double tValue = t.get("value").asDouble();
-				if ("CPU".equals(tName)) metric(out, "Temperature|temp_cpu", tValue);
-				else if ("Local".equals(tName)) metric(out, "Temperature|temp_local", tValue);
-				else if ("PHY".equals(tName)) metric(out, "Temperature|temp_phy", tValue);
+				SimpleJson tValue = t.get("value");
+				if ("CPU".equals(tName)) metricIfPresent(out, "Temperature|temp_cpu", tValue);
+				else if ("Local".equals(tName)) metricIfPresent(out, "Temperature|temp_local", tValue);
+				else if ("PHY".equals(tName)) metricIfPresent(out, "Temperature|temp_phy", tValue);
 			}
-		}
 
-		SimpleJson st = dev.get("speedtest-status");
-		if (!st.isNull()) {
-			metric(out, "Speedtest|xput_up", st.get("xput_upload").asDouble());
-			metric(out, "Speedtest|xput_down", st.get("xput_download").asDouble());
-			metric(out, "Speedtest|speedtest_latency", st.get("latency").asDouble());
+			SimpleJson st = dev.get("speedtest-status");
+			metricIfPresent(out, "Speedtest|xput_up", st.get("xput_upload"));
+			metricIfPresent(out, "Speedtest|xput_down", st.get("xput_download"));
+			metricIfPresent(out, "Speedtest|speedtest_latency", st.get("latency"));
 		}
 
 		prop(out, "Configuration|model", dev.get("model").asString(""));
@@ -778,11 +970,20 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 			return;
 		}
 
-		metric(out, "Traffic|tx_bytes", wan.get("tx_bytes").asDouble());
-		metric(out, "Traffic|rx_bytes", wan.get("rx_bytes").asDouble());
-		metric(out, "Health|latency", wan.get("latency").asDouble());
-		metric(out, "Health|availability", wan.get("availability").asDouble());
-		metric(out, "Health|speed", wan.get("speed").asDouble());
+		// Build 15 (issue #14): none of the WAN's metrics while its gateway
+		// is not informing the controller (UniFiValues.
+		// publishesPerformance); otherwise each only when present.
+		if (devicePerformance(dev)) {
+			// Cumulative counters (build 15, issue #16: unit bytes, was
+			// declared bytes/s) and UniFi's own rates (issue #29).
+			metricIfPresent(out, "Traffic|tx_bytes", wan.get("tx_bytes"));
+			metricIfPresent(out, "Traffic|rx_bytes", wan.get("rx_bytes"));
+			metricIfPresent(out, "Traffic|tx_rate", wan.get("tx_bytes-r"));
+			metricIfPresent(out, "Traffic|rx_rate", wan.get("rx_bytes-r"));
+			metricIfPresent(out, "Health|latency", wan.get("latency"));
+			metricIfPresent(out, "Health|availability", wan.get("availability"));
+			metricIfPresent(out, "Health|speed", wan.get("speed"));
+		}
 
 		prop(out, "Configuration|type", wan.get("type").asString(""));
 		prop(out, "Configuration|ip", wan.get("ip").asString(""));
@@ -808,18 +1009,20 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 			return;
 		}
 
-		SimpleJson ss = dev.get("system-stats");
-		if (!ss.isNull()) {
-			metric(out, "System|cpu_pct", parseDouble(ss.get("cpu").asString("0")));
-			metric(out, "System|mem_pct", parseDouble(ss.get("mem").asString("0")));
+		// Build 15 (issue #14): state first; a switch not informing
+		// the controller (state other than 1, 4, 5, 7)
+		// publishes state and properties only.
+		boolean perf = publishState(out, dev);
+		if (perf) {
+			systemStats(out, dev);
+			satisfactionIfPresent(out, "System|satisfaction", dev.get("satisfaction"));
 		}
-		metric(out, "System|uptime", dev.get("uptime").asDouble());
-		metric(out, "System|num_sta", dev.get("num_sta").asDouble());
-		metric(out, "System|satisfaction", dev.get("satisfaction").asDouble());
 
-		double maxPower = dev.get("total_max_power").asDouble();
-		boolean poeCapable = maxPower > 0;
-		metric(out, "PoE|total_max_power", maxPower);
+		// total_max_power is null on a non-PoE switch: no PoE budget metrics
+		// then (before build 15 they were published as 0).
+		Double maxPower = UniFiValues.number(dev.get("total_max_power").asString());
+		boolean poeCapable = maxPower != null && maxPower > 0;
+		if (perf) metricIfPresent(out, "PoE|total_max_power", maxPower);
 
 		prop(out, "Configuration|model", dev.get("model").asString(""));
 		prop(out, "Configuration|firmware", dev.get("version").asString(""));
@@ -831,21 +1034,30 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		prop(out, "Configuration|has_fan",
 				dev.get("has_fan").asBoolean() ? "true" : "false");
 
-		// PoE budget — sum each port's draw (same fields collectSwitchPort reads).
+		// PoE budget: sum each PoE port's draw (same fields collectSwitchPort
+		// reads). Build 15 (issue #14): published only when at least one PoE
+		// port reports its draw, and the remaining budget only when the
+		// switch reports its maximum too.
 		SimpleJson ports = dev.get("port_table");
-		int portCount = 0;
+		int portCount = ports.isNull() ? 0 : ports.size();
 		double poeConsumption = 0;
-		if (!ports.isNull()) {
-			portCount = ports.size();
-			for (SimpleJson port : ports.asList()) {
-				if (port.get("port_poe").asBoolean()) {
-					poeConsumption += parseDouble(port.get("poe_power").asString("0"));
+		boolean poeReported = false;
+		for (SimpleJson port : ports.asList()) {
+			if (port.get("port_poe").asBoolean()) {
+				Double draw = UniFiValues.number(port.get("poe_power").asString());
+				if (draw != null) {
+					poeConsumption += draw;
+					poeReported = true;
 				}
 			}
 		}
 		prop(out, "Configuration|port_count", String.valueOf(portCount));
-		metric(out, "PoE|poe_consumption", poeConsumption);
-		metric(out, "PoE|poe_budget_remaining", maxPower - poeConsumption);
+		if (perf && poeReported) {
+			metric(out, "PoE|poe_consumption", poeConsumption);
+			if (maxPower != null) {
+				metric(out, "PoE|poe_budget_remaining", maxPower - poeConsumption);
+			}
+		}
 	}
 
 	private void collectSwitchPort(ResourceConfig rc, Snapshot s, List<MetricData> out)
@@ -869,15 +1081,34 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 			return;
 		}
 
-		metric(out, "Traffic|tx_bytes", port.get("tx_bytes").asDouble());
-		metric(out, "Traffic|rx_bytes", port.get("rx_bytes").asDouble());
-		metric(out, "Traffic|tx_errors", port.get("tx_errors").asDouble());
-		metric(out, "Traffic|rx_errors", port.get("rx_errors").asDouble());
+		// Build 15 (issue #14): none of the port's metrics while its switch
+		// is not informing the controller (UniFiValues.
+		// publishesPerformance); otherwise each only when present.
+		boolean perf = devicePerformance(dev);
+		if (perf) {
+			metricIfPresent(out, "Traffic|tx_bytes", port.get("tx_bytes"));
+			metricIfPresent(out, "Traffic|rx_bytes", port.get("rx_bytes"));
+			// Build 15 (issue #29): UniFi's own rates next to the counters.
+			metricIfPresent(out, "Traffic|tx_rate", port.get("tx_bytes-r"));
+			metricIfPresent(out, "Traffic|rx_rate", port.get("rx_bytes-r"));
+			metricIfPresent(out, "Traffic|tx_errors", port.get("tx_errors"));
+			metricIfPresent(out, "Traffic|rx_errors", port.get("rx_errors"));
 
-		metric(out, "Status|satisfaction", port.get("satisfaction").asDouble());
-		metric(out, "Status|mac_table_count", (double) port.get("mac_table").size());
+			satisfactionIfPresent(out, "Status|satisfaction", port.get("satisfaction"));
+			// The size of mac_table when the port carries the list, else the
+			// controller's own mac_table_count; neither present, nothing
+			// (before build 15 a port without mac_table read 0).
+			SimpleJson macTable = port.get("mac_table");
+			if (macTable.isList()) {
+				metric(out, "Status|mac_table_count", macTable.size());
+			} else {
+				metricIfPresent(out, "Status|mac_table_count",
+						port.get("mac_table_count"));
+			}
+		}
 		prop(out, "Status|up", port.get("up").asBoolean() ? "true" : "false");
-		prop(out, "Status|speed", String.valueOf(port.get("speed").asLong()));
+		// Review N1: blank when absent, never "0" (a down port reads 0).
+		prop(out, "Status|speed", port.get("speed").asString(""));
 		prop(out, "Status|duplex",
 				port.get("full_duplex").asBoolean() ? "Full" : "Half");
 		prop(out, "Status|is_uplink",
@@ -887,10 +1118,13 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		prop(out, "Status|port_name", port.get("name").asString(""));
 
 		if (port.get("port_poe").asBoolean()) {
-			// poe_power / voltage / current are STRINGS — coerce.
-			metric(out, "PoE|poe_power", parseDouble(port.get("poe_power").asString("0")));
-			metric(out, "PoE|poe_voltage", parseDouble(port.get("poe_voltage").asString("0")));
-			metric(out, "PoE|poe_current", parseDouble(port.get("poe_current").asString("0")));
+			// poe_power / voltage / current are strings; parsed, and
+			// published only when present (build 15, issue #14).
+			if (perf) {
+				metricIfPresent(out, "PoE|poe_power", port.get("poe_power"));
+				metricIfPresent(out, "PoE|poe_voltage", port.get("poe_voltage"));
+				metricIfPresent(out, "PoE|poe_current", port.get("poe_current"));
+			}
 			prop(out, "PoE|poe_enable",
 					port.get("poe_enable").asBoolean() ? "true" : "false");
 			prop(out, "PoE|poe_class", port.get("poe_class").asString(""));
@@ -923,14 +1157,13 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 			return;
 		}
 
-		SimpleJson ss = dev.get("system-stats");
-		if (!ss.isNull()) {
-			metric(out, "System|cpu_pct", parseDouble(ss.get("cpu").asString("0")));
-			metric(out, "System|mem_pct", parseDouble(ss.get("mem").asString("0")));
+		// Build 15 (issue #14): state first; a access point not informing
+		// the controller (state other than 1, 4, 5, 7)
+		// publishes state and properties only.
+		if (publishState(out, dev)) {
+			systemStats(out, dev);
+			satisfactionIfPresent(out, "System|satisfaction", dev.get("satisfaction"));
 		}
-		metric(out, "System|uptime", dev.get("uptime").asDouble());
-		metric(out, "System|num_sta", dev.get("num_sta").asDouble());
-		metric(out, "System|satisfaction", dev.get("satisfaction").asDouble());
 
 		prop(out, "Configuration|model", dev.get("model").asString(""));
 		prop(out, "Configuration|firmware", dev.get("version").asString(""));
@@ -961,23 +1194,34 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 			return;
 		}
 
-		metric(out, "RF|channel", radio.get("channel").asDouble());
-		metric(out, "RF|tx_power", radio.get("tx_power").asDouble());
-		metric(out, "RF|cu_total", radio.get("cu_total").asDouble());
-		metric(out, "RF|satisfaction", radio.get("satisfaction").asDouble());
-		metric(out, "RF|tx_retries_pct", radio.get("tx_retries_pct").asDouble());
+		// Build 15 (issue #14): none of the radio's metrics while its access
+		// point is not informing the controller (UniFiValues.
+		// publishesPerformance); otherwise each only when present.
+		boolean perf = devicePerformance(dev);
+		if (perf) {
+			metricIfPresent(out, "RF|channel", radio.get("channel"));
+			metricIfPresent(out, "RF|tx_power", radio.get("tx_power"));
+			metricIfPresent(out, "RF|cu_total", radio.get("cu_total"));
+			satisfactionIfPresent(out, "RF|satisfaction", radio.get("satisfaction"));
+			metricIfPresent(out, "RF|tx_retries_pct", radio.get("tx_retries_pct"));
 
-		metric(out, "Clients|user_num_sta", radio.get("user-num_sta").asDouble());
+			metricIfPresent(out, "Clients|user_num_sta", radio.get("user-num_sta"));
+		}
 
 		String radioName = radio.get("name").asString("");
-		if (!radioName.isEmpty()) {
+		if (perf && !radioName.isEmpty()) {
 			SimpleJson statAp = dev.get("stat").get("ap");
-			if (!statAp.isNull()) {
-				metric(out, "Traffic|tx_bytes",
-						statAp.get(radioName + "-tx_bytes").asDouble());
-				metric(out, "Traffic|rx_bytes",
-						statAp.get(radioName + "-rx_bytes").asDouble());
-			}
+			metricIfPresent(out, "Traffic|tx_bytes",
+					statAp.get(radioName + "-tx_bytes"));
+			metricIfPresent(out, "Traffic|rx_bytes",
+					statAp.get(radioName + "-rx_bytes"));
+			// Build 15 (issue #29): the radio's rate, next to its counters,
+			// when the access point reports one (key unproven on a live
+			// controller; nothing is published when it is absent).
+			metricIfPresent(out, "Traffic|tx_rate",
+					statAp.get(radioName + "-tx_bytes-r"));
+			metricIfPresent(out, "Traffic|rx_rate",
+					statAp.get(radioName + "-rx_bytes-r"));
 		}
 
 		prop(out, "Configuration|radio_type", radioCode);
@@ -987,10 +1231,11 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 			for (SimpleJson rt : radioTable.asList()) {
 				if (radioCode.equals(rt.get("radio").asString(""))) {
 					prop(out, "Configuration|ht", rt.get("ht").asString(""));
+					// Review N1: blank when absent, never "0".
 					prop(out, "Configuration|min_txpower",
-							String.valueOf(rt.get("min_txpower").asLong()));
+							rt.get("min_txpower").asString(""));
 					prop(out, "Configuration|max_txpower",
-							String.valueOf(rt.get("max_txpower").asLong()));
+							rt.get("max_txpower").asString(""));
 					break;
 				}
 			}
@@ -1012,13 +1257,14 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		}
 		for (SimpleJson sub : health.get("data").asList()) {
 			if (!"wlan".equals(sub.get("subsystem").asString(""))) continue;
-			metric(out, "Clients|num_user", sub.get("num_user").asDouble());
-			metric(out, "Clients|num_guest", sub.get("num_guest").asDouble());
-			metric(out, "Clients|num_iot", sub.get("num_iot").asDouble());
-			metric(out, "Clients|num_disconnected", sub.get("num_disconnected").asDouble());
-			metric(out, "Performance|num_ap", sub.get("num_ap").asDouble());
-			metric(out, "Performance|tx_bytes_r", sub.get("tx_bytes-r").asDouble());
-			metric(out, "Performance|rx_bytes_r", sub.get("rx_bytes-r").asDouble());
+			// Build 15 (issue #14): each only when present.
+			metricIfPresent(out, "Clients|num_user", sub.get("num_user"));
+			metricIfPresent(out, "Clients|num_guest", sub.get("num_guest"));
+			metricIfPresent(out, "Clients|num_iot", sub.get("num_iot"));
+			metricIfPresent(out, "Clients|num_disconnected", sub.get("num_disconnected"));
+			metricIfPresent(out, "Performance|num_ap", sub.get("num_ap"));
+			metricIfPresent(out, "Performance|tx_bytes_r", sub.get("tx_bytes-r"));
+			metricIfPresent(out, "Performance|rx_bytes_r", sub.get("rx_bytes-r"));
 			break;
 		}
 	}
@@ -1034,30 +1280,44 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 			return;
 		}
 
-		double upSince = nvr.get("upSince").asDouble();
-		metric(out, "System|uptime", upSince > 0
-				? (System.currentTimeMillis() / 1000.0) - (upSince / 1000.0)
-				: 0);
+		// Build 15 (issue #14): uptime only when upSince is present (it was
+		// published as 0 when absent); storage values only when present,
+		// usage only when both are and the total is not 0.
+		Double upSince = UniFiValues.number(nvr.get("upSince").asString());
+		if (upSince != null && upSince > 0) {
+			metric(out, "System|uptime",
+					(System.currentTimeMillis() / 1000.0) - (upSince / 1000.0));
+		}
 
 		SimpleJson storage = nvr.get("storageInfo");
-		if (!storage.isNull()) {
-			double total = storage.get("totalSize").asDouble();
-			double used = storage.get("usedSize").asDouble();
-			metric(out, "Storage|total_bytes", total);
-			metric(out, "Storage|used_bytes", used);
-			metric(out, "Storage|usage_pct", total > 0 ? (used / total) * 100.0 : 0);
+		Double total = UniFiValues.number(storage.get("totalSize").asString());
+		Double used = UniFiValues.number(storage.get("usedSize").asString());
+		metricIfPresent(out, "Storage|total_bytes", total);
+		metricIfPresent(out, "Storage|used_bytes", used);
+		if (total != null && used != null && total > 0) {
+			metric(out, "Storage|usage_pct", (used / total) * 100.0);
 		}
 
 		prop(out, "Configuration|model", nvr.get("modelKey").asString(""));
 		prop(out, "Configuration|firmware", nvr.get("firmwareVersion").asString(""));
 		prop(out, "Configuration|name", nvr.get("name").asString("NVR"));
 		prop(out, "Configuration|host_type", nvr.get("type").asString(""));
-		prop(out, "Configuration|recording_retention_mode",
-				nvr.get("recordingRetentionDurationMs").asString(""));
+		// Build 15 (issue #16): replaces recording_retention_mode, which
+		// carried the raw millisecond duration as text under a "mode" name.
+		// Published only when the NVR sends the duration.
+		Double retentionDays = UniFiValues.millisToDays(UniFiValues.number(
+				nvr.get("recordingRetentionDurationMs").asString()));
+		if (retentionDays != null) {
+			numericProp(out, "Configuration|recording_retention_days", retentionDays);
+		}
 
 		SimpleJson cameras = s.protect.get("cameras");
-		prop(out, "Configuration|camera_count",
-				String.valueOf(cameras.isNull() ? 0 : cameras.size()));
+		// Peer review 6: only cameras discovery registers (with a MAC).
+		int cameraCount = 0;
+		for (SimpleJson cam : cameras.asList()) {
+			if (UniFiIds.mac(cam.get("mac").asString()) != null) cameraCount++;
+		}
+		prop(out, "Configuration|camera_count", String.valueOf(cameraCount));
 	}
 
 	private void collectCamera(ResourceConfig rc, Snapshot s, List<MetricData> out) {
@@ -1069,11 +1329,17 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		}
 
 		// Protect uptime / lastMotion are milliseconds — normalize to seconds.
-		metric(out, "Status|uptime", cam.get("uptime").asLong() / 1000.0);
-		long lastMotion = cam.get("lastMotion").asLong();
-		if (lastMotion > 0) {
-			metric(out, "Status|last_motion", lastMotion / 1000.0);
-		}
+		// Build 15 (issue #14): uptime only when present.
+		Double camUptime = UniFiValues.number(cam.get("uptime").asString());
+		if (camUptime != null) metric(out, "Status|uptime", camUptime / 1000.0);
+		// Build 15 (issue #16): an age in seconds, replacing last_motion
+		// (the epoch timestamp divided by 1000 published as "sec"), so "no
+		// motion for X" can be alerted on. Absent when the camera never
+		// recorded motion.
+		metricIfPresent(out, "Status|seconds_since_last_motion",
+				UniFiValues.secondsSince(
+						UniFiValues.number(cam.get("lastMotion").asString()),
+						System.currentTimeMillis()));
 
 		prop(out, "Status|state", cam.get("state").asString(""));
 		prop(out, "Status|is_connected",
@@ -1090,7 +1356,7 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		prop(out, "Hardware|is_wireless", wireless ? "true" : "false");
 		SimpleJson wired = cam.get("wiredConnectionState");
 		prop(out, "Hardware|phy_rate", !wired.isNull()
-				? String.valueOf(wired.get("phyRate").asLong()) : "");
+				? wired.get("phyRate").asString("") : ""); // review N1
 
 		prop(out, "Network|ip", cam.get("host").asString(""));
 		prop(out, "Network|mac_address", camMac);
@@ -1125,7 +1391,9 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 
 			for (SimpleJson dev : devices.get("data").asList()) {
 				String type = dev.get("type").asString("");
-				String mac = dev.get("mac").asString();
+				String mac = deviceMac(dev);
+				if (mac == null) continue; // build 15, issue #23
+				if (!isDiscovered(dev)) continue; // Codex P2: as discovery
 				String name = deviceDisplayName(dev);
 				ResourceKey devKey;
 
@@ -1144,7 +1412,8 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 					SimpleJson ports = dev.get("port_table");
 					if (!ports.isNull()) {
 						for (SimpleJson port : ports.asList()) {
-							int idx = (int) port.get("port_idx").asLong();
+							Integer idx = portIdx(port);
+							if (idx == null) continue; // build 15, issue #23
 							rb.parent(devKey, rb.resource("UniFiSwitchPort",
 									portDisplayName(port, idx),
 									"port_key", mac + "_" + idx));
@@ -1155,7 +1424,8 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 					SimpleJson radios = dev.get("radio_table_stats");
 					if (!radios.isNull()) {
 						for (SimpleJson radio : radios.asList()) {
-							String code = radio.get("radio").asString("");
+							String code = radioCode(radio);
+							if (code == null) continue; // peer review 7
 							rb.parent(devKey, rb.resource("UniFiRadio",
 									radioDisplayName(code), "radio_key", mac + "_" + code));
 						}
@@ -1168,7 +1438,8 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 
 			// Wire device topology by uplink_mac; no uplink → direct child of site.
 			for (SimpleJson dev : devices.get("data").asList()) {
-				String mac = dev.get("mac").asString();
+				String mac = deviceMac(dev);
+				if (mac == null) continue; // build 15, issue #23
 				ResourceKey devKey = deviceByMac.get(mac);
 				if (devKey == null) continue;
 				String uplinkMac = dev.get("uplink").get("uplink_mac").asString("");
@@ -1193,22 +1464,27 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 				String siteDesc = firstSite.get("desc").asString(siteName);
 				ResourceKey siteKey = rb.resource("UniFiSite", siteDesc,
 						"site_name", siteName);
-				ResourceKey nvrKey = rb.resource("UniFiNvr",
-						nvr.get("name").asString("NVR"),
-						"nvr_mac", nvr.get("mac").asString(""));
+				// Peer review 7: an NVR with no MAC is not registered, so it
+				// has no edges: no site to NVR edge and no NVR to camera
+				// edges. Its cameras are still registered and collect, with
+				// no parent in the tree.
+				String nvrMac = UniFiIds.mac(nvr.get("mac").asString());
+				ResourceKey nvrKey = nvrMac == null ? null : rb.resource("UniFiNvr",
+						nvr.get("name").asString("NVR"), "nvr_mac", nvrMac);
 				// Build 14 (issue #19): not under a site that was not read
 				// (full-set would drop that site's device edges); the NVR
 				// keeps its existing site edge and its cameras below. See
 				// SiteIsolation.nvrParentSite.
-				if (java.util.Objects.equals(siteName, SiteIsolation.nvrParentSite(
-						s.siteNames(), s.failedSites))) {
+				if (nvrKey != null && java.util.Objects.equals(siteName,
+						SiteIsolation.nvrParentSite(s.siteNames(), s.failedSites))) {
 					rb.parent(siteKey, nvrKey);
 				}
 
 				SimpleJson cameras = s.protect.get("cameras");
-				if (!cameras.isNull()) {
+				if (nvrKey != null && !cameras.isNull()) {
 					for (SimpleJson cam : cameras.asList()) {
-						String camMac = cam.get("mac").asString();
+						String camMac = UniFiIds.mac(cam.get("mac").asString());
+						if (camMac == null) continue; // build 15, issue #23
 						rb.parent(nvrKey, rb.resource("UniFiCamera",
 								cam.get("name").asString(camMac),
 								"camera_mac", camMac));
@@ -1267,7 +1543,33 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 	// -----------------------------------------------------------------------
 
 	private static boolean isGateway(String type) {
-		return "udm".equals(type) || "ugw".equals(type) || "uxg".equals(type);
+		return UniFiIds.isGatewayType(type);
+	}
+
+	/** Build 15 (issue #23): the device MAC, or null when it has none. */
+	private static String deviceMac(SimpleJson dev) {
+		return UniFiIds.mac(dev.get("mac").asString());
+	}
+
+	/**
+	 * Codex P2: whether discovery registers this device, the one rule
+	 * enumeration, relationships, the stitch port index and the site's
+	 * Device Count share; see {@link UniFiIds#discoveredDevice}.
+	 */
+	private static boolean isDiscovered(SimpleJson dev) {
+		SimpleJson a = dev.get("adopted");
+		return UniFiIds.discoveredDevice(dev.get("type").asString(""),
+				dev.get("mac").asString(), a.isNull() ? null : a.asBoolean());
+	}
+
+	/** Build 15 (peer review 7): the radio code, or null when it has none. */
+	private static String radioCode(SimpleJson radio) {
+		return UniFiIds.radioCode(radio.get("radio").asString());
+	}
+
+	/** Build 15 (issue #23): the port index, or null when it has none. */
+	private static Integer portIdx(SimpleJson port) {
+		return UniFiIds.portIdx(port.get("port_idx").asString());
 	}
 
 	private static String deviceDisplayName(SimpleJson dev) {
@@ -1299,7 +1601,9 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		SimpleJson ports = dev.get("port_table");
 		if (ports.isNull()) return null;
 		for (SimpleJson port : ports.asList()) {
-			if ((int) port.get("port_idx").asLong() == idx) return port;
+			// Build 15 (issue #23): a port with no port_idx is never port 0.
+			Integer portIdx = portIdx(port);
+			if (portIdx != null && portIdx == idx) return port;
 		}
 		return null;
 	}
@@ -1307,18 +1611,12 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 	private static SimpleJson findRadioStats(SimpleJson dev, String radioCode) {
 		SimpleJson radios = dev.get("radio_table_stats");
 		if (radios.isNull()) return null;
+		// Peer review 7: a blank code is no radio's identity.
+		if (UniFiIds.radioCode(radioCode) == null) return null;
 		for (SimpleJson radio : radios.asList()) {
 			if (radioCode.equals(radio.get("radio").asString(""))) return radio;
 		}
 		return null;
-	}
-
-	private static double parseDouble(String s) {
-		try {
-			return Double.parseDouble(s);
-		} catch (NumberFormatException e) {
-			return 0;
-		}
 	}
 
 	private static int parseInt(String s) {
@@ -1335,12 +1633,36 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 
 	@Override
 	public void onDiscard() {
-		SuiteApiStitcher st = this.suiteStitcher;
-		if (st != null) st.discard();
-		this.suiteStitcher = null;
-		this.stitcher = null;
+		// Build 15 (issue #24): the login-only client and the stitcher;
+		// super.onDiscard() releases the main client (this.httpClient).
+		discardConfigured();
 		this.configured = null;
 		super.onDiscard();
+	}
+
+	/**
+	 * Build 15 (issue #24): releases the current configuration's login-only
+	 * HTTP client and the Suite API stitcher, on reconfigure and on discard.
+	 * The main client is the framework's to release (review N2).
+	 */
+	private void discardConfigured() {
+		Configured c = this.configured;
+		if (c != null) {
+			// Review N2: the login-only client only. The framework releases
+			// the main client (onConfigure before configureAdapter, and
+			// super.onDiscard()); Test Connection's finally discards both.
+			HttpClients.discardQuietly(c.clients.login);
+		}
+		SuiteApiStitcher st = this.suiteStitcher;
+		this.suiteStitcher = null;
+		this.stitcher = null;
+		if (st != null) {
+			try {
+				st.discard();
+			} catch (RuntimeException ignored) {
+				// Best effort; the token TTL is the platform's safety net.
+			}
+		}
 	}
 
 	// -----------------------------------------------------------------------
@@ -1349,7 +1671,7 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 
 	/**
 	 * One immutable pull of the UniFi Network/Protect API per cycle, shared across
-	 * the per-resource collect calls. Built by {@link #build(UniFiApiClient,
+	 * the per-resource collect calls. Built by {@link #build(Configured,
 	 * UniFiAdapter)} which asserts the critical {@code /self/sites} contract and
 	 * logs an INFO breadcrumb of the resource counts. Protect is optional: a
 	 * Protect failure leaves {@code protect == null} (logged INFO) and the NVR /
@@ -1363,6 +1685,10 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		SimpleJson sites;
 		final Map<String, SimpleJson> devicesBySite = new HashMap<>();
 		final Map<String, SimpleJson> healthBySite = new HashMap<>();
+		// Build 15 (issue #18, peer review 4): stat/sysinfo data[0], read
+		// once per build for the controller; null when not read or when
+		// the call failed or carried no record.
+		SimpleJson sysinfo;
 		SimpleJson protect; // nullable — Protect optional
 
 		// Build 14 (issue #19): sites whose stat/device failed this cycle,
@@ -1390,9 +1716,11 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		int vmnicUnmatchedCount;
 		int vmnicConflictedCount;
 
-		static Snapshot build(UniFiApiClient api,
-				SiteReads.Cooldowns siteCooldowns, UniFiAdapter adapter)
+		static Snapshot build(Configured c, UniFiAdapter adapter)
 				throws Exception {
+			UniFiApiClient api = c.api;
+			SiteReads.Cooldowns siteCooldowns = c.siteCooldowns;
+			Logger inventoryLog = c.inventoryLog;
 			Snapshot s = new Snapshot();
 			s.sites = api.listSites();
 
@@ -1423,6 +1751,9 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 			s.failedSites.putAll(deviceReads.failed);
 
 			int devTotal = 0;
+			// Build 15 (issue #23): no-identity records, skipped everywhere.
+			int skippedDevices = 0, skippedPorts = 0, skippedCameras = 0;
+			int skippedRadios = 0, skippedNvrs = 0; // peer review 7
 			for (String siteName : siteNames) {
 				SimpleJson devices = deviceReads.bySite.get(siteName);
 				if (devices == null) {
@@ -1432,10 +1763,38 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 				SimpleJson devData = devices.get("data");
 				if (!devData.isNull() && devData.isList()) {
 					for (SimpleJson dev : devData.asList()) {
-						String mac = dev.get("mac").asString("");
-						if (!mac.isEmpty()) {
-							s.deviceByMac.put(mac, dev);
-							devTotal++;
+						String mac = deviceMac(dev);
+						if (mac == null) {
+							skippedDevices++;
+							debugQuietly(inventoryLog, "UniFi inventory: skipped a "
+									+ dev.get("type").asString("?") + " device on site "
+									+ siteName + " with no MAC (model="
+									+ dev.get("model").asString("?") + ", name="
+									+ dev.get("name").asString("") + ")");
+							continue;
+						}
+						s.deviceByMac.put(mac, dev);
+						devTotal++;
+						if ("uap".equals(dev.get("type").asString(""))) {
+							for (SimpleJson radio : dev.get("radio_table_stats").asList()) {
+								if (radioCode(radio) == null) {
+									skippedRadios++;
+									debugQuietly(inventoryLog, "UniFi inventory: "
+											+ "skipped a radio with no radio code "
+											+ "on access point " + mac);
+								}
+							}
+						}
+						if ("usw".equals(dev.get("type").asString(""))) {
+							for (SimpleJson port : dev.get("port_table").asList()) {
+								if (portIdx(port) == null) {
+									skippedPorts++;
+									debugQuietly(inventoryLog, "UniFi inventory: "
+											+ "skipped a port with no port_idx on "
+											+ "switch " + mac + " (name="
+											+ port.get("name").asString("") + ")");
+								}
+							}
 						}
 					}
 				}
@@ -1444,6 +1803,32 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 				} catch (Exception e) {
 					adapter.logWarn("Snapshot: stat/health failed for site "
 							+ siteName + ": " + e.getMessage());
+				}
+			}
+
+			// Build 15 (issue #18, peer review 4): stat/sysinfo once per
+			// build, through the first site read this build (it describes
+			// the controller, not the site), for every site's Version and
+			// Timezone properties only. A failure costs those properties,
+			// nothing else; after a 401, 403 or 429 it is not asked again for
+			// 15 minutes (SysinfoGate), so a refusing account (View Only is
+			// to be confirmed on devel, review W3) does not cost one extra
+			// login per cycle.
+			String sysinfoSite = null;
+			for (String siteName : siteNames) {
+				if (s.devicesBySite.containsKey(siteName)) {
+					sysinfoSite = siteName;
+					break;
+				}
+			}
+			if (sysinfoSite != null && c.sysinfoGate.shouldAsk(adapter::logInfo)) {
+				try {
+					SimpleJson info = api.statSysinfo(sysinfoSite).get("data").get(0);
+					if (info.isObject()) s.sysinfo = info;
+				} catch (InterruptedException e) {
+					throw e; // review N4: Stop Collecting reaches the framework
+				} catch (Exception e) {
+					c.sysinfoGate.failed(e, adapter::logWarn, adapter::logInfo);
 				}
 			}
 
@@ -1457,21 +1842,40 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 			// computeVmnicStitch — it must never fail this Snapshot build,
 			// since the internal UniFi topology this method exists to
 			// produce does not depend on the optional cross-adapter join.
-			computeVmnicStitch(s, adapter);
+			computeVmnicStitch(s, adapter, c.vmnicHosts);
 
-			// Protect (optional sub-tree).
+			// Protect (optional sub-tree). Fetched every cycle, as in build
+			// 14 (review B1: never cached, so camera and NVR values are never
+			// older than one interval). A failed fetch leaves Protect absent
+			// for the cycle: the NVR and cameras publish nothing that cycle.
 			try {
 				SimpleJson protect = api.protectBootstrap();
 				if (!protect.get("nvr").isNull()) {
 					s.protect = protect;
+					if (UniFiIds.mac(protect.get("nvr").get("mac").asString()) == null) {
+						skippedNvrs++;
+						debugQuietly(inventoryLog, "UniFi inventory: skipped the "
+								+ "NVR with no MAC (name=" + protect.get("nvr")
+										.get("name").asString("") + "); its cameras "
+								+ "are registered with no parent");
+					}
 					SimpleJson cams = protect.get("cameras");
 					if (!cams.isNull()) {
 						for (SimpleJson cam : cams.asList()) {
-							String mac = cam.get("mac").asString("");
-							if (!mac.isEmpty()) s.cameraByMac.put(mac, cam);
+							String mac = UniFiIds.mac(cam.get("mac").asString());
+							if (mac == null) {
+								skippedCameras++;
+								debugQuietly(inventoryLog, "UniFi inventory: "
+										+ "skipped a camera with no MAC (name="
+										+ cam.get("name").asString("") + ")");
+								continue;
+							}
+							s.cameraByMac.put(mac, cam);
 						}
 					}
 				}
+			} catch (InterruptedException e) {
+				throw e;
 			} catch (Exception e) {
 				adapter.logInfo("Snapshot: Protect not available: " + e.getMessage());
 			}
@@ -1480,8 +1884,25 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 					+ devTotal + " devices / " + s.cameraByMac.size() + " cameras / "
 					+ "protect=" + (s.protect != null)
 					+ (s.failedSites.isEmpty() ? ""
-							: " / unreadable sites=" + s.failedSites.keySet()));
+							: " / unreadable sites=" + s.failedSites.keySet())
+					+ (skippedDevices + skippedPorts + skippedCameras
+							+ skippedRadios + skippedNvrs == 0 ? ""
+							: " / skipped with no identity: " + skippedDevices
+									+ " devices, " + skippedPorts + " ports, "
+									+ skippedRadios + " radios, "
+									+ skippedCameras + " cameras, "
+									+ skippedNvrs + " nvr"));
 			return s;
+		}
+
+		/** A logger fault never reaches the snapshot build. */
+		private static void debugQuietly(Logger log, String message) {
+			if (log == null) return;
+			try {
+				log.debug(message);
+			} catch (RuntimeException ignored) {
+				// logging is best effort
+			}
 		}
 
 		/** Site names in /self/sites order. */
@@ -1500,6 +1921,11 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 
 		SimpleJson healthForSite(String siteName) {
 			return healthBySite.get(siteName);
+		}
+
+		/** Build 15 (issue #18): stat/sysinfo data[0], or null. */
+		SimpleJson sysinfo() {
+			return sysinfo;
 		}
 
 		SimpleJson findSite(String siteName) {
@@ -1599,12 +2025,22 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 	 * joint key, or identical values) is not a conflict and remains
 	 * idempotent: the property write stays in place.
 	 */
-	private static void computeVmnicStitch(Snapshot s, UniFiAdapter adapter) {
+	private static void computeVmnicStitch(Snapshot s, UniFiAdapter adapter,
+			RefreshCache<List<UniFiStitcher.ForeignHost>> hostCache)
+			throws InterruptedException {
 		UniFiStitcher st = adapter.stitcher;
 		if (st == null) return;
 		try {
 			Map<String, List<OwnPort>> ownIndex = buildOwnPortIndex(s);
-			List<UniFiStitcher.ForeignHost> hosts = st.listHostsWithVmnicLldp();
+			// Build 15 (issue #21): the Suite API host list is fetched at most
+			// every SLOW_REFRESH_MS (bulk properties reads inside) and reused
+			// between fetches; the join against this cycle's own inventory
+			// below still runs every snapshot.
+			List<UniFiStitcher.ForeignHost> hosts = hostCache.get(
+					st::listHostsWithVmnicLldp,
+					(e, age) -> adapter.logWarn("vmnic→port stitch: refresh failed ("
+							+ e.getMessage() + "); reusing the host list fetched "
+							+ (age / 60_000L) + " min ago"));
 			s.vmnicHostCount = hosts.size();
 
 			// Per-cycle claimant tracking for the LLDP|* property (build 11).
@@ -1694,6 +2130,8 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 					}
 				}
 			}
+		} catch (InterruptedException e) {
+			throw e;
 		} catch (Exception e) {
 			adapter.logWarn("vmnic→port stitch: fetch/match failed (internal "
 					+ "topology unaffected): " + e.getMessage());
@@ -1725,12 +2163,15 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 			String siteName = site.get("name").asString();
 			for (SimpleJson dev : s.devicesForSite(siteName).get("data").asList()) {
 				if (!"usw".equals(dev.get("type").asString(""))) continue;
-				String switchMac = dev.get("mac").asString();
+				String switchMac = deviceMac(dev);
+				if (switchMac == null) continue; // build 15, issue #23
+				if (!isDiscovered(dev)) continue; // Codex P2: no port resources
 				String devName = dev.get("name").asString("");
 				SimpleJson ports = dev.get("port_table");
 				if (ports.isNull()) continue;
 				for (SimpleJson port : ports.asList()) {
-					int idx2 = (int) port.get("port_idx").asLong();
+					Integer idx2 = portIdx(port);
+					if (idx2 == null) continue; // build 15, issue #23
 					String portKey = switchMac + "_" + idx2;
 					String portName = portDisplayName(port, idx2);
 					OwnPort candidate = new OwnPort(portKey, portName);

@@ -13,9 +13,12 @@ out="$(mktemp -d)"
 trap 'rm -rf "$out"' EXIT
 javac -d "$out" -sourcepath src:tests \
     tests/com/vcfcf/adapters/unifi/*.java
-for t in AllowInsecureTest SnapshotCacheTest SnapshotTimingTest \
-        SiteReadsTest SiteIsolationTest FailureMappingTest; do
+# Build 15: every *Test.java and every tests/test_*.py runs, so a new test
+# cannot be added and silently skipped.
+for f in tests/com/vcfcf/adapters/unifi/*Test.java; do
+    t="$(basename "$f" .java)"
     java -cp "$out" "com.vcfcf.adapters.unifi.$t"
 done
-python3 tests/test_allow_insecure_default.py
-python3 tests/test_snapshot_logger_once.py
+for p in tests/test_*.py; do
+    python3 "$p"
+done

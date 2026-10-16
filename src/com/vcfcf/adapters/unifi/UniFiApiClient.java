@@ -53,6 +53,15 @@ public final class UniFiApiClient {
 	}
 
 	/**
+	 * Build 15 (issue #18): controller information for the site, read for
+	 * the site's {@code version} (Network application) and {@code timezone}
+	 * properties. Envelope {@code {meta, data:[{...}]}}, one element.
+	 */
+	public SimpleJson statSysinfo(String site) throws IOException, InterruptedException {
+		return get(sitePath(site, "stat/sysinfo"));
+	}
+
+	/**
 	 * Build 15 (issue #22): the site name comes from {@code /self/sites} and
 	 * is percent-encoded as one path segment, so a reserved character in it
 	 * cannot change which path is requested (as {@link UniFiStitcher} already

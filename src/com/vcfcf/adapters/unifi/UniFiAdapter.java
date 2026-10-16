@@ -784,8 +784,27 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 			return;
 		}
 		prop(out, "Configuration|description", site.get("desc").asString(""));
-		prop(out, "Configuration|device_count",
-				String.valueOf(site.get("device_count").asLong()));
+		// Build 15 (issue #18): counted from this cycle's stat/device for the
+		// site (the site was read: requireSiteRead above), not read from the
+		// /self/sites entry. Counts adopted devices: a device whose
+		// "adopted" is false (pending adoption) is not counted, a device that
+		// does not carry the field is.
+		int adopted = 0;
+		for (SimpleJson dev : s.devicesForSite(siteName).get("data").asList()) {
+			SimpleJson a = dev.get("adopted");
+			if (a.isNull() || a.asBoolean()) adopted++;
+		}
+		prop(out, "Configuration|device_count", String.valueOf(adopted));
+		// Build 15 (issue #18): version (Network application) and timezone
+		// from stat/sysinfo, each published only when the controller sent
+		// it; absent when sysinfo could not be read this cycle.
+		SimpleJson info = s.sysinfoForSite(siteName);
+		if (info != null) {
+			String version = info.get("version").asString("");
+			if (!version.isEmpty()) prop(out, "Configuration|version", version);
+			String timezone = info.get("timezone").asString("");
+			if (!timezone.isEmpty()) prop(out, "Configuration|timezone", timezone);
+		}
 	}
 
 	private void collectGateway(ResourceConfig rc, Snapshot s, List<MetricData> out)
@@ -1476,6 +1495,9 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		SimpleJson sites;
 		final Map<String, SimpleJson> devicesBySite = new HashMap<>();
 		final Map<String, SimpleJson> healthBySite = new HashMap<>();
+		// Build 15 (issue #18): stat/sysinfo data[0] per site; absent when
+		// the call failed or carried no record.
+		final Map<String, SimpleJson> sysinfoBySite = new HashMap<>();
 		SimpleJson protect; // nullable — Protect optional
 
 		// Build 14 (issue #19): sites whose stat/device failed this cycle,
@@ -1578,6 +1600,17 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 					adapter.logWarn("Snapshot: stat/health failed for site "
 							+ siteName + ": " + e.getMessage());
 				}
+				// Build 15 (issue #18): optional, for the site's version and
+				// timezone properties only. A failure costs those two
+				// properties this cycle (INFO), nothing else.
+				try {
+					SimpleJson info = api.statSysinfo(siteName).get("data").get(0);
+					if (info.isObject()) s.sysinfoBySite.put(siteName, info);
+				} catch (Exception e) {
+					adapter.logInfo("Snapshot: stat/sysinfo not available for "
+							+ "site " + siteName + " (version and timezone "
+							+ "not published): " + e.getMessage());
+				}
 			}
 
 			// vmnic→port stitch (build 9; optional, crash-safe). Fetches the
@@ -1654,6 +1687,11 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 
 		SimpleJson healthForSite(String siteName) {
 			return healthBySite.get(siteName);
+		}
+
+		/** Build 15 (issue #18): stat/sysinfo data[0], or null. */
+		SimpleJson sysinfoForSite(String siteName) {
+			return sysinfoBySite.get(siteName);
 		}
 
 		SimpleJson findSite(String siteName) {

@@ -45,6 +45,24 @@ Roughly 130 metric and property keys across the eleven kinds (see
 per-WAN throughput, per-switch-port traffic and PoE draw, per-radio channel
 utilization and client counts, and the Protect NVR / camera state.
 
+Build 15 changes to the metric set:
+
+- **New `Status|state`** on the gateway, switch and access point: 1 when
+  the device is connected, 0 when it is not (disconnected, upgrading,
+  provisioning and so on).
+- **New `Traffic|tx_rate` / `rx_rate`** (bytes/s) on switch ports, radios
+  and WAN interfaces, from UniFi's own `tx_bytes-r` / `rx_bytes-r` rate
+  fields. `Traffic|tx_bytes` / `rx_bytes` stay, and are cumulative
+  counters since the device's counter reset (the WAN ones were mislabelled
+  bytes/s before build 15). Use the rate keys for throughput charts. The
+  radio rate field is not yet confirmed on a live controller, so a radio
+  may publish no rate.
+- **Renamed:** camera `Status|last_motion` (an epoch timestamp) is now
+  `Status|seconds_since_last_motion` (time since the last motion), and NVR
+  `Configuration|recording_retention_mode` (the raw milliseconds as text)
+  is now the numeric `Configuration|recording_retention_days`. The old
+  keys stop updating and keep their last value.
+
 ## Cross-Adapter Behavior
 
 The pack ships an **optional, informational vmnic→port stitch to ESXi
@@ -113,6 +131,27 @@ logged at debug only, never WARN spam.
 > dropped at persist time).
 
 ## Notable Behaviors
+
+- **A gap means not reported, never a fake 0** (build 15). A metric is
+  published only when the controller sends its field as a number; before
+  build 15 a missing field was published as 0 (0% CPU, 0 clients, 0
+  satisfaction). A satisfaction of -1, UniFi's "no data", is not
+  published. A gateway, switch or access point that is not connected
+  publishes `Status|state` = 0 and its properties, and no metrics; its
+  switch ports, radios and WAN interfaces publish no metrics either. So a
+  blank stretch on a device's CPU or traffic chart, with `Status|state` at
+  0, means the device was disconnected, not that collection broke. A device
+  whose state is not reported publishes no state and the metrics it does
+  report. Views, super metrics and averages that used to count those zeros
+  read differently from build 15 (averages that included offline zeros
+  rise).
+
+- **Records with no identity are skipped** (build 15). A device or camera
+  the controller reports without a MAC, and a switch port without a
+  `port_idx` (for example a device pending adoption), is not discovered,
+  not related and not counted in the site's Device Count. Each is logged at
+  DEBUG, and the `UniFi API snapshot` INFO line ends with `skipped with no
+  identity: <n> devices, <n> ports, <n> cameras` when any were skipped.
 
 - **Session self-recovery on 401.** UniFi controller sessions expire on the
   server side. Build 5 bundles the framework jar that makes the session

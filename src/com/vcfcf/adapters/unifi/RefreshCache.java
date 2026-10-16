@@ -5,10 +5,8 @@ import java.util.function.BiConsumer;
 /**
  * Build 15 (issue #21): a value refreshed at most every {@code refreshMs}
  * and reused between refreshes, with the last good value covering a failed
- * refresh. Holds the vmnic stitch's Suite API host list (refreshMs 15
- * minutes) and the Protect bootstrap (refreshMs 0: fetched on every call,
- * the last good value used only when a fetch fails) across collection
- * cycles (one instance each per configure, in
+ * refresh. Holds the vmnic stitch's Suite API host list (15 minutes) across
+ * collection cycles (one instance per configure, in
  * the adapter's {@code Configured} holder, so an instance edit starts
  * empty). No VCF Ops SDK and no framework-jar dependency: the plain-main
  * tests drive it with a fake clock and a counting loader.

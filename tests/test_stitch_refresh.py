@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Build 15 (issue #21): the vmnic stitch host list is fetched through a
-15-minute RefreshCache; the Protect bootstrap through one with refreshMs 0
-(fetched every cycle, the last good one reused only when a fetch fails, for
-at most an hour; unit-tested in RefreshCacheTest). The stitch reads host
-properties in bulk with a per-host fallback (paths unit-tested in
-VmnicLldpTest), and interrupts are not swallowed. Structural; stdlib only,
-run from anywhere (ci/run_java_tests.sh runs it).
+15-minute RefreshCache (unit-tested in RefreshCacheTest). The Protect
+bootstrap is not cached at all (review B1): fetched every snapshot, absent
+for the cycle on failure, as in build 14. The stitch reads host properties
+in bulk with a per-host fallback (paths unit-tested in VmnicLldpTest), and
+interrupts are not swallowed. Structural; stdlib only, run from anywhere
+(ci/run_java_tests.sh runs it).
 """
 import pathlib
 import re
@@ -21,20 +21,14 @@ def main():
         "the stitch host list is not fetched through the refresh cache"
     assert "st.listHostsWithVmnicLldp()" not in SRC, \
         "the stitch host list is still fetched on every snapshot"
-    assert "c.protectBootstrap.get(api::protectBootstrap" in SRC, \
-        "the Protect bootstrap is not fetched through the refresh cache"
-    assert "api.protectBootstrap()" not in SRC, \
-        "the Protect bootstrap is still fetched on every snapshot"
-    assert re.search(r"final RefreshCache<List<UniFiStitcher.ForeignHost>> vmnicHosts", SRC)
-    assert re.search(r"final RefreshCache<SimpleJson> protectBootstrap", SRC)
-    assert re.search(r"RefreshCache<List<UniFiStitcher.ForeignHost>> vmnicHosts =\s*"
+    assert "SimpleJson protect = api.protectBootstrap();" in SRC, \
+        "the Protect bootstrap is not fetched on every snapshot"
+    assert "protectBootstrap.get(" not in SRC and "RefreshCache<SimpleJson>" not in SRC \
+        and "PROTECT_REFRESH_MS" not in SRC, \
+        "the Protect bootstrap is cached (a stale bootstrap would publish as current)"
+    assert re.search(r"final RefreshCache<List<UniFiStitcher.ForeignHost>> vmnicHosts =\s*"
                      r"new RefreshCache<>\(System::currentTimeMillis, SLOW_REFRESH_MS,", SRC), \
         "the host list is not on the 15-minute refresh"
-    assert re.search(r"RefreshCache<SimpleJson> protectBootstrap =\s*"
-                     r"new RefreshCache<>\(System::currentTimeMillis, PROTECT_REFRESH_MS,", SRC), \
-        "the Protect bootstrap is not on its own (every cycle) refresh"
-    assert "PROTECT_REFRESH_MS = 0L;" in SRC, \
-        "the Protect bootstrap would be served from cache between cycles"
 
     assert "VmnicLldp.bulkPropertiesPaths(ids, VmnicLldp.BULK_BATCH)" in ST
     loop = ST[ST.index("for (int b = 0; b < paths.size(); b++)"):]

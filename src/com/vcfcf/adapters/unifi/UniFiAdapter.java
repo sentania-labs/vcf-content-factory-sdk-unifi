@@ -168,29 +168,18 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 	 * Build 15 (issue #21): the vmnic stitch's Suite API host list is
 	 * fetched at most this often and reused between fetches. LLDP
 	 * neighbours change rarely; before build 15 it was fetched on every
-	 * snapshot build (every cycle). The Protect bootstrap is not held this
-	 * long: camera state and NVR storage stay one collection interval fresh
-	 * (see {@link #PROTECT_REFRESH_MS}).
+	 * snapshot build (every cycle). The Protect bootstrap is not cached at
+	 * all: it is fetched every cycle, as in build 14, so camera state and
+	 * NVR storage are never older than one collection interval.
 	 */
 	private static final long SLOW_REFRESH_MS = 15L * 60_000L;
 
 	/**
-	 * Build 15 (issue #21): after a failed refresh the last good host list or
-	 * bootstrap is reused for at most this long after it was fetched; past
-	 * it the failure degrades as before (no stitch, no Protect objects).
+	 * Build 15 (issue #21): after a failed refresh the last good host list is
+	 * reused for at most this long after it was fetched; past it the failure
+	 * degrades as before (no stitch for the cycle).
 	 */
 	private static final long SLOW_MAX_STALE_MS = 60L * 60_000L;
-
-	/**
-	 * Build 15 (issue #21, coordinator correction): 0, so the Protect
-	 * bootstrap is fetched on every snapshot build (every cycle), exactly as
-	 * build 14, and camera state and NVR storage stay one collection
-	 * interval fresh. The cache only covers a failed fetch: the last good
-	 * bootstrap is reused for up to {@link #SLOW_MAX_STALE_MS}, so one
-	 * failed Protect read does not drop the NVR and camera objects' data and
-	 * edges for the cycle (the edge flapping half of fork issue #20).
-	 */
-	private static final long PROTECT_REFRESH_MS = 0L;
 
 	/**
 	 * One configuration's API client, snapshot cache and the snapshot
@@ -212,13 +201,9 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		final SnapshotCache<Snapshot> snapshots;
 		final SiteReads.Cooldowns siteCooldowns;
 		// Build 15 (issue #21): the host list is fetched at most every
-		// SLOW_REFRESH_MS; the Protect bootstrap every cycle, its cache only
-		// covering a failed fetch (PROTECT_REFRESH_MS = 0).
+		// SLOW_REFRESH_MS. The Protect bootstrap has no cache (every cycle).
 		final RefreshCache<List<UniFiStitcher.ForeignHost>> vmnicHosts =
 				new RefreshCache<>(System::currentTimeMillis, SLOW_REFRESH_MS,
-						SLOW_MAX_STALE_MS);
-		final RefreshCache<SimpleJson> protectBootstrap =
-				new RefreshCache<>(System::currentTimeMillis, PROTECT_REFRESH_MS,
 						SLOW_MAX_STALE_MS);
 
 		Configured(UniFiApiClient api, HttpClients clients, Logger apiLog,
@@ -1778,18 +1763,13 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 			// produce does not depend on the optional cross-adapter join.
 			computeVmnicStitch(s, adapter, c.vmnicHosts);
 
-			// Protect (optional sub-tree). Build 15 (issue #21): fetched
-			// every cycle as before, so camera and NVR values stay one
-			// interval fresh; only when the fetch fails is the last good
-			// bootstrap reused, for up to SLOW_MAX_STALE_MS after it was
-			// fetched (one INFO per such cycle). Past that, or with nothing
-			// to reuse, Protect is absent for the cycle as before.
+			// Protect (optional sub-tree). Fetched every cycle, as in build
+			// 14 (review B1: never cached, so camera and NVR values are never
+			// older than one interval). A failed fetch leaves Protect absent
+			// for the cycle: the NVR and cameras publish nothing that cycle.
 			try {
-				SimpleJson protect = c.protectBootstrap.get(api::protectBootstrap,
-						(e, age) -> adapter.logInfo("Snapshot: Protect bootstrap "
-								+ "refresh failed (" + e.getMessage() + "); reusing "
-								+ "the one fetched " + (age / 60_000L) + " min ago"));
-				if (protect != null && !protect.get("nvr").isNull()) {
+				SimpleJson protect = api.protectBootstrap();
+				if (!protect.get("nvr").isNull()) {
 					s.protect = protect;
 					SimpleJson cams = protect.get("cameras");
 					if (!cams.isNull()) {

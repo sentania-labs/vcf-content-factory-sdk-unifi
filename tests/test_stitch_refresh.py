@@ -41,6 +41,9 @@ def main():
     assert "if (perHost.contains(h.identifier)) {" in ST
     assert "getOrDefault(h.identifier" not in ST, \
         "an omitted host defaults to no neighbours"
+    assert 'parsed.get("pageInfo").get("totalCount")' in ST \
+        and "list != null && list.isList(), totalCount)) {" in ST, \
+        "the host list check does not get the answer's pageInfo.totalCount"
     assert "VmnicLldp.hostListPresent(" in ST and '"totalCount"' in ST, \
         "a Call A answer without resourceList is cached as an empty host list"
     assert "if (list == null || !list.isList()) return out;" not in ST

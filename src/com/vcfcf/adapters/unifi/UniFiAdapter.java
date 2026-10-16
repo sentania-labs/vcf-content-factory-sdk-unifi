@@ -165,6 +165,21 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 	private static final long AUTH_FAILURE_BACKOFF_MS = 15L * 60_000L;
 
 	/**
+	 * Build 15 (issue #21): the vmnic stitch's Suite API host list and the
+	 * Protect bootstrap are fetched at most this often and reused between
+	 * fetches. LLDP neighbours change rarely; before build 15 both were
+	 * fetched on every snapshot build (every cycle).
+	 */
+	private static final long SLOW_REFRESH_MS = 15L * 60_000L;
+
+	/**
+	 * Build 15 (issue #21): after a failed refresh the last good host list or
+	 * bootstrap is reused for at most this long after it was fetched; past
+	 * it the failure degrades as before (no stitch, no Protect objects).
+	 */
+	private static final long SLOW_MAX_STALE_MS = 60L * 60_000L;
+
+	/**
 	 * One configuration's API client, snapshot cache and the snapshot
 	 * cache's logger (immutable). The logger is resolved once in
 	 * configureAdapter and stored here: componentLogger resets the logger to
@@ -183,6 +198,13 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		final Logger inventoryLog;
 		final SnapshotCache<Snapshot> snapshots;
 		final SiteReads.Cooldowns siteCooldowns;
+		// Build 15 (issue #21): fetched at most every SLOW_REFRESH_MS.
+		final RefreshCache<List<UniFiStitcher.ForeignHost>> vmnicHosts =
+				new RefreshCache<>(System::currentTimeMillis, SLOW_REFRESH_MS,
+						SLOW_MAX_STALE_MS);
+		final RefreshCache<SimpleJson> protectBootstrap =
+				new RefreshCache<>(System::currentTimeMillis, SLOW_REFRESH_MS,
+						SLOW_MAX_STALE_MS);
 
 		Configured(UniFiApiClient api, HttpClients clients, Logger apiLog,
 				Logger snapshotLog, Logger inventoryLog,
@@ -710,8 +732,7 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 					+ "configured");
 		}
 		return c.snapshots.get(
-				() -> Snapshot.build(c.api, c.siteCooldowns, c.inventoryLog,
-						this),
+				() -> Snapshot.build(c, this),
 				this::logWarn);
 	}
 
@@ -1596,7 +1617,7 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 
 	/**
 	 * One immutable pull of the UniFi Network/Protect API per cycle, shared across
-	 * the per-resource collect calls. Built by {@link #build(UniFiApiClient,
+	 * the per-resource collect calls. Built by {@link #build(Configured,
 	 * UniFiAdapter)} which asserts the critical {@code /self/sites} contract and
 	 * logs an INFO breadcrumb of the resource counts. Protect is optional: a
 	 * Protect failure leaves {@code protect == null} (logged INFO) and the NVR /
@@ -1640,9 +1661,11 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		int vmnicUnmatchedCount;
 		int vmnicConflictedCount;
 
-		static Snapshot build(UniFiApiClient api,
-				SiteReads.Cooldowns siteCooldowns, Logger inventoryLog,
-				UniFiAdapter adapter) throws Exception {
+		static Snapshot build(Configured c, UniFiAdapter adapter)
+				throws Exception {
+			UniFiApiClient api = c.api;
+			SiteReads.Cooldowns siteCooldowns = c.siteCooldowns;
+			Logger inventoryLog = c.inventoryLog;
 			Snapshot s = new Snapshot();
 			s.sites = api.listSites();
 
@@ -1738,12 +1761,18 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 			// computeVmnicStitch — it must never fail this Snapshot build,
 			// since the internal UniFi topology this method exists to
 			// produce does not depend on the optional cross-adapter join.
-			computeVmnicStitch(s, adapter);
+			computeVmnicStitch(s, adapter, c.vmnicHosts);
 
-			// Protect (optional sub-tree).
+			// Protect (optional sub-tree). Build 15 (issue #21): the
+			// bootstrap (up to several MB) is fetched at most every
+			// SLOW_REFRESH_MS and reused between fetches; a failed refresh
+			// reuses the last good one for up to SLOW_MAX_STALE_MS.
 			try {
-				SimpleJson protect = api.protectBootstrap();
-				if (!protect.get("nvr").isNull()) {
+				SimpleJson protect = c.protectBootstrap.get(api::protectBootstrap,
+						(e, age) -> adapter.logInfo("Snapshot: Protect bootstrap "
+								+ "refresh failed (" + e.getMessage() + "); reusing "
+								+ "the one fetched " + (age / 60_000L) + " min ago"));
+				if (protect != null && !protect.get("nvr").isNull()) {
 					s.protect = protect;
 					SimpleJson cams = protect.get("cameras");
 					if (!cams.isNull()) {
@@ -1760,6 +1789,8 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 						}
 					}
 				}
+			} catch (InterruptedException e) {
+				throw e;
 			} catch (Exception e) {
 				adapter.logInfo("Snapshot: Protect not available: " + e.getMessage());
 			}
@@ -1906,12 +1937,22 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 	 * joint key, or identical values) is not a conflict and remains
 	 * idempotent: the property write stays in place.
 	 */
-	private static void computeVmnicStitch(Snapshot s, UniFiAdapter adapter) {
+	private static void computeVmnicStitch(Snapshot s, UniFiAdapter adapter,
+			RefreshCache<List<UniFiStitcher.ForeignHost>> hostCache)
+			throws InterruptedException {
 		UniFiStitcher st = adapter.stitcher;
 		if (st == null) return;
 		try {
 			Map<String, List<OwnPort>> ownIndex = buildOwnPortIndex(s);
-			List<UniFiStitcher.ForeignHost> hosts = st.listHostsWithVmnicLldp();
+			// Build 15 (issue #21): the Suite API host list is fetched at most
+			// every SLOW_REFRESH_MS (bulk properties reads inside) and reused
+			// between fetches; the join against this cycle's own inventory
+			// below still runs every snapshot.
+			List<UniFiStitcher.ForeignHost> hosts = hostCache.get(
+					st::listHostsWithVmnicLldp,
+					(e, age) -> adapter.logWarn("vmnic→port stitch: refresh failed ("
+							+ e.getMessage() + "); reusing the host list fetched "
+							+ (age / 60_000L) + " min ago"));
 			s.vmnicHostCount = hosts.size();
 
 			// Per-cycle claimant tracking for the LLDP|* property (build 11).
@@ -2001,6 +2042,8 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 					}
 				}
 			}
+		} catch (InterruptedException e) {
+			throw e;
 		} catch (Exception e) {
 			adapter.logWarn("vmnic→port stitch: fetch/match failed (internal "
 					+ "topology unaffected): " + e.getMessage());

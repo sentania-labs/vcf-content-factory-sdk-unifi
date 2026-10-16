@@ -10,9 +10,12 @@ NVRs and cameras — and breaks switches and APs down to per-port and
 per-radio child objects with PoE tracking. It replaces the Tier 1 UniFi
 Network and UniFi Network Integration management packs.
 
-Each cycle the adapter performs one UniFi Network / Protect pull into a
-per-cycle snapshot and emits the full topology and metrics, with the
-controller-wide picture anchored on the World resource.
+Each cycle the adapter performs one UniFi Network pull into a per-cycle
+snapshot and emits the full topology and metrics, with the controller-wide
+picture anchored on the World resource. The Protect bootstrap and the
+vmnic stitch's Suite API host list change rarely and are fetched at most
+every 15 minutes, then reused between fetches (build 15, issue #21), so NVR
+and camera values can be up to 15 minutes old.
 
 ### Resource kinds
 
@@ -74,7 +77,18 @@ HostSystem resources and reads their properties over the local VCF
 Operations Suite API using the collector's ambient credentials. When the
 Suite API is unavailable, or a fetch/match fails, the stitch is skipped
 (WARN once) and all UniFi resources collect normally — collection is
-never failed over the optional cross-link. Zero or ambiguous
+never failed over the optional cross-link.
+
+Since build 15 (issue #21) the host list and the hosts' LLDP properties
+are fetched at most every 15 minutes, the properties in bulk (one Suite
+API request per 50 hosts, `GET /api/resources/properties?resourceId=..`,
+instead of one per host), and the result is reused between fetches; the
+join against the UniFi inventory still runs every cycle. A batch the bulk
+request cannot read is read one host at a time, as before (one WARN per
+batch). A failed fetch reuses the last good host list, with a WARN, for up
+to an hour after it was fetched; past that the stitch is skipped until the
+Suite API answers again. A new vmnic cabling change therefore shows within
+about 15 minutes. Zero or ambiguous
 `(switch, port)` matches are legitimate (no fabricated edges, ever) and
 are counted in a one-line INFO summary each cycle; per-pair misses are
 logged at debug only, never WARN spam.

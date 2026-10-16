@@ -165,10 +165,12 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 	private static final long AUTH_FAILURE_BACKOFF_MS = 15L * 60_000L;
 
 	/**
-	 * Build 15 (issue #21): the vmnic stitch's Suite API host list and the
-	 * Protect bootstrap are fetched at most this often and reused between
-	 * fetches. LLDP neighbours change rarely; before build 15 both were
-	 * fetched on every snapshot build (every cycle).
+	 * Build 15 (issue #21): the vmnic stitch's Suite API host list is
+	 * fetched at most this often and reused between fetches. LLDP
+	 * neighbours change rarely; before build 15 it was fetched on every
+	 * snapshot build (every cycle). The Protect bootstrap is not held this
+	 * long: camera state and NVR storage stay one collection interval fresh
+	 * (see {@link #PROTECT_REFRESH_MS}).
 	 */
 	private static final long SLOW_REFRESH_MS = 15L * 60_000L;
 
@@ -178,6 +180,17 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 	 * it the failure degrades as before (no stitch, no Protect objects).
 	 */
 	private static final long SLOW_MAX_STALE_MS = 60L * 60_000L;
+
+	/**
+	 * Build 15 (issue #21, coordinator correction): 0, so the Protect
+	 * bootstrap is fetched on every snapshot build (every cycle), exactly as
+	 * build 14, and camera state and NVR storage stay one collection
+	 * interval fresh. The cache only covers a failed fetch: the last good
+	 * bootstrap is reused for up to {@link #SLOW_MAX_STALE_MS}, so one
+	 * failed Protect read does not drop the NVR and camera objects' data and
+	 * edges for the cycle (the edge flapping half of fork issue #20).
+	 */
+	private static final long PROTECT_REFRESH_MS = 0L;
 
 	/**
 	 * One configuration's API client, snapshot cache and the snapshot
@@ -198,12 +211,14 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		final Logger inventoryLog;
 		final SnapshotCache<Snapshot> snapshots;
 		final SiteReads.Cooldowns siteCooldowns;
-		// Build 15 (issue #21): fetched at most every SLOW_REFRESH_MS.
+		// Build 15 (issue #21): the host list is fetched at most every
+		// SLOW_REFRESH_MS; the Protect bootstrap every cycle, its cache only
+		// covering a failed fetch (PROTECT_REFRESH_MS = 0).
 		final RefreshCache<List<UniFiStitcher.ForeignHost>> vmnicHosts =
 				new RefreshCache<>(System::currentTimeMillis, SLOW_REFRESH_MS,
 						SLOW_MAX_STALE_MS);
 		final RefreshCache<SimpleJson> protectBootstrap =
-				new RefreshCache<>(System::currentTimeMillis, SLOW_REFRESH_MS,
+				new RefreshCache<>(System::currentTimeMillis, PROTECT_REFRESH_MS,
 						SLOW_MAX_STALE_MS);
 
 		Configured(UniFiApiClient api, HttpClients clients, Logger apiLog,
@@ -1763,10 +1778,12 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 			// produce does not depend on the optional cross-adapter join.
 			computeVmnicStitch(s, adapter, c.vmnicHosts);
 
-			// Protect (optional sub-tree). Build 15 (issue #21): the
-			// bootstrap (up to several MB) is fetched at most every
-			// SLOW_REFRESH_MS and reused between fetches; a failed refresh
-			// reuses the last good one for up to SLOW_MAX_STALE_MS.
+			// Protect (optional sub-tree). Build 15 (issue #21): fetched
+			// every cycle as before, so camera and NVR values stay one
+			// interval fresh; only when the fetch fails is the last good
+			// bootstrap reused, for up to SLOW_MAX_STALE_MS after it was
+			// fetched (one INFO per such cycle). Past that, or with nothing
+			// to reuse, Protect is absent for the cycle as before.
 			try {
 				SimpleJson protect = c.protectBootstrap.get(api::protectBootstrap,
 						(e, age) -> adapter.logInfo("Snapshot: Protect bootstrap "

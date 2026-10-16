@@ -21,6 +21,7 @@ public final class RefreshCacheTest {
 		failureAfterMaxStaleThrows();
 		interruptIsNeverAbsorbed();
 		nullCachesNothing();
+		zeroRefreshFetchesEveryCallAndCoversFailures();
 		System.out.println("RefreshCacheTest: all assertions passed");
 	}
 
@@ -105,6 +106,41 @@ public final class RefreshCacheTest {
 		} catch (InterruptedException expected) {
 			// Stop Collecting reaches the framework
 		}
+	}
+
+	/**
+	 * The Protect setting (refreshMs 0): fetched on every call, so values
+	 * are one cycle fresh; the last good value is used only when a fetch
+	 * fails, and only within the stale bound.
+	 */
+	static void zeroRefreshFetchesEveryCallAndCoversFailures() throws Exception {
+		AtomicLong now = new AtomicLong(0);
+		AtomicInteger loads = new AtomicInteger();
+		RefreshCache<String> c = new RefreshCache<>(now::get, 0L, 60 * MIN);
+		RefreshCache.Loader<String> ok = () -> "b" + loads.incrementAndGet();
+		T.eq("b1", c.get(ok, null), "first cycle fetches");
+		T.eq("b2", c.get(ok, null), "same instant: fetched again, never served cached");
+		now.set(5 * MIN);
+		T.eq("b3", c.get(ok, null), "next cycle fetches");
+		T.eq(3, loads.get(), "one fetch per call");
+		now.set(10 * MIN);
+		AtomicLong age = new AtomicLong(-1);
+		T.eq("b3", c.get(() -> { throw new IOException("protect 502"); },
+				(e, a) -> age.set(a)), "failed fetch: last good reused");
+		T.eq(5 * MIN, age.get(), "reuse reported with its age");
+		now.set(64 * MIN + 59_999);
+		T.eq("b3", c.get(() -> { throw new IOException("protect 502"); },
+				(e, a) -> { }), "still within the hour");
+		now.set(65 * MIN);
+		try {
+			c.get(() -> { throw new IOException("protect 502"); }, (e, a) -> {
+				throw new AssertionError("an hour-old bootstrap must not be reused");
+			});
+			throw new AssertionError("past the hour the failure is thrown");
+		} catch (IOException expected) {
+			// Protect absent for the cycle, as in build 14
+		}
+		T.eq("b4", c.get(ok, null), "recovery fetches fresh");
 	}
 
 	static void nullCachesNothing() throws Exception {

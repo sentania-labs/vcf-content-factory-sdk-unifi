@@ -12,10 +12,12 @@ Network and UniFi Network Integration management packs.
 
 Each cycle the adapter performs one UniFi Network pull into a per-cycle
 snapshot and emits the full topology and metrics, with the controller-wide
-picture anchored on the World resource. The Protect bootstrap and the
-vmnic stitch's Suite API host list change rarely and are fetched at most
-every 15 minutes, then reused between fetches (build 15, issue #21), so NVR
-and camera values can be up to 15 minutes old.
+picture anchored on the World resource. The Protect bootstrap is fetched
+every cycle too; when that fetch fails, the last good bootstrap is reused
+for up to an hour, so the NVR and camera objects keep collecting through a
+brief Protect outage (build 15). The vmnic stitch's Suite API host list
+changes rarely and is fetched at most every 15 minutes (build 15, issue
+#21).
 
 ### Resource kinds
 

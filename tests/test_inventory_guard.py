@@ -52,6 +52,20 @@ def main():
                            else "Relationships", name)
         assert 'UniFiIds.mac(cam.get("mac")' in body, \
             f"{name} does not guard camera MACs"
+    # Every guarded read is followed by its skip: no "<mac>_null" keys.
+    for m in re.finditer(r"(?:Integer|String) (\w+) = (?:portIdx\(port\)|deviceMac\(dev\)"
+                         r"|UniFiIds\.mac\(cam\.get\(\"mac\"\)\.asString\(\)\));\n", SRC):
+        var = m.group(1)
+        nxt = SRC[m.end():SRC.find("\n", m.end())].strip()
+        if nxt.startswith(f"if ({var} == null) continue;"):
+            continue
+        if nxt.startswith(f"if ({var} != null && "):  # findPort's null-aware match
+            continue
+        if nxt.startswith(f"if ({var} == null) {{"):  # the snapshot index counts it
+            block = SRC[m.end():SRC.find("continue;", m.end())]
+            assert "Skipped" in block or "skipped" in block, block
+            continue
+        sys.exit(f"FAIL: {var} read without its skip: {nxt}")
     find = method_body("SimpleJson", "findPort")
     assert "portIdx(port)" in find, "findPort matches a missing index as 0"
     build = method_body("Snapshot", "build")

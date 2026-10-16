@@ -171,18 +171,22 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 	 * INFO on every call, so a per-failure lookup would make the cache's
 	 * DEBUG line unreachable even after an operator raised the level.
 	 * Codex P1: also the per-site stat/device cool-downs, so an instance
-	 * edit starts with none.
+	 * edit starts with none. Build 15 (issue #34): also the API client's
+	 * logger, resolved once per configure for the same reason and shared by
+	 * the client and its login callback.
 	 */
 	private static final class Configured {
 		final UniFiApiClient api;
+		final Logger apiLog;
 		final Logger snapshotLog;
 		final SnapshotCache<Snapshot> snapshots;
 		final SiteReads.Cooldowns siteCooldowns;
 
-		Configured(UniFiApiClient api, Logger snapshotLog,
+		Configured(UniFiApiClient api, Logger apiLog, Logger snapshotLog,
 				SnapshotCache<Snapshot> snapshots,
 				SiteReads.Cooldowns siteCooldowns) {
 			this.api = api;
+			this.apiLog = apiLog;
 			this.snapshotLog = snapshotLog;
 			this.snapshots = snapshots;
 			this.siteCooldowns = siteCooldowns;
@@ -213,12 +217,14 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 			ResourceConfig resourceConfig) {
 		UniFiConfig cfg = buildConfig(resourceConfig);
 		this.config = cfg;
-		this.httpClient = buildHttpClient(cfg);
-		// Resolved once per configure, never per failure (see Configured).
+		// Resolved once per configure, never per failure or per login (see
+		// Configured; build 15, issue #34 for the API client's logger).
+		Logger apiLog = componentLogger(UniFiApiClient.class);
 		Logger snapshotLog = componentLogger(SnapshotCache.class);
+		this.httpClient = buildHttpClient(cfg, apiLog);
 		this.configured = new Configured(
-				new UniFiApiClient(this.httpClient,
-						componentLogger(UniFiApiClient.class)),
+				new UniFiApiClient(this.httpClient, apiLog),
+				apiLog,
 				snapshotLog,
 				new SnapshotCache<>(System::currentTimeMillis,
 						MAX_SNAPSHOT_AGE_MS, FAILURE_RETRY_BACKOFF_MS,
@@ -265,16 +271,21 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		return new UniFiConfig(host, port, username, password, allowInsecure);
 	}
 
-	private ManagedHttpClient buildHttpClient(UniFiConfig cfg) {
+	/**
+	 * @param apiLog the API client's logger, resolved once by the caller
+	 *        (build 15, issue #34): the login callback runs on every login
+	 *        and must not look it up again, since each lookup resets the
+	 *        logger to INFO.
+	 */
+	private ManagedHttpClient buildHttpClient(UniFiConfig cfg, Logger apiLog) {
 		// Raw client for the login round-trip (no auth strategy attached yet).
 		ManagedHttpClient rawHttp = baseBuilder(cfg).build();
 
 		// Session cookie auth: TOKEN cookie minted by POST /api/auth/login. The
-		// login closure captures only the raw client and the credentials; the
-		// password never leaves this client.
+		// login closure captures only the raw client, the logger and the
+		// credentials; the password never leaves this client.
 		SessionCookieAuth auth = new SessionCookieAuth("TOKEN",
-				() -> UniFiApiClient.login(rawHttp,
-						componentLogger(UniFiApiClient.class),
+				() -> UniFiApiClient.login(rawHttp, apiLog,
 						cfg.username, cfg.password));
 
 		return baseBuilder(cfg).auth(auth).build();
@@ -338,10 +349,16 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 						+ "UniFi host/credentials to test");
 			}
 			UniFiConfig testCfg = buildConfig(rc);
-			ManagedHttpClient testHttp = buildHttpClient(testCfg);
+			// Build 15 (issue #34): one logger for the test client and its
+			// login callback. A configured instance reuses the one its
+			// configure resolved; a bare instance (the usual Test Connection
+			// caller) resolves it once here.
+			Configured c = this.configured;
+			Logger apiLog = c != null ? c.apiLog
+					: componentLogger(UniFiApiClient.class);
+			ManagedHttpClient testHttp = buildHttpClient(testCfg, apiLog);
 			try {
-				UniFiApiClient testApi = new UniFiApiClient(testHttp,
-						componentLogger(UniFiApiClient.class));
+				UniFiApiClient testApi = new UniFiApiClient(testHttp, apiLog);
 				SimpleJson sites = testApi.listSites();
 				SimpleJson data = sites.get("data");
 				if (data.isNull() || !data.isList()) {

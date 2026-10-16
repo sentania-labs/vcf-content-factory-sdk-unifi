@@ -6,6 +6,8 @@ Dev preview build 15 (`build-sdk` stamps 0.0.0.15); the 1.1.0 release line
 is unchanged until a `v1.1.0.15` tag. The factory brief is
 knowledge/designs/sdk-adapters/unifi-build-15-correctness-and-hygiene.md.
 
+- fix(adapter): build 15, issue #34: the UniFiApiClient logger is resolved once per configure, stored on the configuration holder and handed to the login callback, instead of being looked up on every login and twice per Test Connection. The framework's componentLogger resets a logger to INFO on every lookup, so a DEBUG line in the client could never have been seen. Test Connection on a bare instance (the usual case) looks it up once. No log line changes today. Tests: tests/test_snapshot_logger_once.py.
+
 ## 0.0.0.14 (Unreleased)
 
 Dev preview build 14 (`build-sdk` stamps 0.0.0.14); the 1.1.0 release line

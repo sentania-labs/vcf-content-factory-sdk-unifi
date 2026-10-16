@@ -45,11 +45,21 @@ public final class UniFiApiClient {
 	}
 
 	public SimpleJson statDevice(String site) throws IOException, InterruptedException {
-		return get("/proxy/network/api/s/" + site + "/stat/device");
+		return get(sitePath(site, "stat/device"));
 	}
 
 	public SimpleJson statHealth(String site) throws IOException, InterruptedException {
-		return get("/proxy/network/api/s/" + site + "/stat/health");
+		return get(sitePath(site, "stat/health"));
+	}
+
+	/**
+	 * Build 15 (issue #22): the site name comes from {@code /self/sites} and
+	 * is percent-encoded as one path segment, so a reserved character in it
+	 * cannot change which path is requested (as {@link UniFiStitcher} already
+	 * encodes its path segments). Ordinary site names are unchanged.
+	 */
+	static String sitePath(String site, String resource) {
+		return "/proxy/network/api/s/" + UniFiIds.pathSegment(site) + "/" + resource;
 	}
 
 	// --- Protect API ---

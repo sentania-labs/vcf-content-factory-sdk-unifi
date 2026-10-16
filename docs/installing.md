@@ -7,10 +7,31 @@
 - A UniFi controller — a UniFi OS console (e.g. UDM / UDM-Pro / Cloud Key)
   or a self-hosted Network controller — reachable from the VCF Operations
   collector on **TCP 443** (HTTPS).
-- A **UniFi controller account** with access to the **Network API** (and
-  the **Protect API**, if you want NVR / camera objects).
+- A **dedicated local UniFi account** with the **View Only** role (see
+  Account below), with access to the **Network API** (and the **Protect
+  API**, if you want NVR / camera objects).
 - For Protect objects, the **UniFi Protect** application must be installed
   and running on the console.
+
+## Account
+
+Create a dedicated account for VCF Operations on the console, for this
+pack only:
+
+- **Local account, not a Ubiquiti (UI.com) SSO / cloud account.** The
+  adapter logs in with a username and password at the console's
+  `POST /api/auth/login`. SSO and cloud accounts cannot log in that way.
+  In UniFi OS, add the user with local access only (the option to
+  restrict the account to local access).
+- **No MFA.** The login has no second factor step, so an account with
+  multi-factor authentication cannot log in.
+- **View Only role** in the Network application, and in Protect too if you
+  want NVR and camera objects. The adapter only reads (see below); an
+  administrator account is not needed and widens the blast radius if the
+  stored password leaks.
+- **A dedicated account**, so a password change or lockout of a person's
+  account does not stop collection, and the controller's logs show the
+  adapter's logins under its own name.
 
 ## Permissions Required
 
@@ -35,9 +56,14 @@ establishes the session.
 |------|----------|-----------|---------|
 | 443  | HTTPS    | Collector → UniFi controller | UniFi Network API + Protect API reads, and the login POST |
 
-The optional LLDP → HostSystem cross-link uses the **ambient** local Suite
-API on the collector and requires no additional outbound network
-configuration.
+The optional vmnic → switch-port stitch to ESXi hosts reads VMWARE
+HostSystem resources and their vCenter-published vmnic LLDP properties over
+the **ambient** local VCF Operations Suite API on the collector, and needs
+no additional outbound network configuration. It needs that local Suite API
+access: on a collector without it (a remote collector with no
+`maintenanceuser.properties`) the stitch is skipped with one WARN and UniFi
+collection is unaffected. The UniFi controller's own LLDP table is not used
+(it is empty on current Network releases).
 
 ## TLS — certificate trust
 
@@ -127,6 +153,8 @@ for:
 - **No NVR / camera objects appear** — the UniFi Protect application is not
   installed/running on the console, or the account lacks Protect API
   access.
-- **No host cross-link on switch ports** — expected on a collector without
-  ambient Suite API access, or where no port's LLDP neighbor is an ESXi
-  host. UniFi collection is unaffected.
+- **No host cross-link on switch ports**: expected on a collector without
+  ambient Suite API access, or where no ESXi host's vmnic reports (to
+  vCenter) an LLDP neighbour that matches a UniFi switch and port. UniFi
+  collection is unaffected. A cabling change shows within about 15 minutes
+  (the stitch refreshes at most that often, build 15).

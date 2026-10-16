@@ -218,7 +218,17 @@ public final class UniFiStitcher {
 		logger.info("vmnic stitch: read properties of " + pending.size()
 				+ " hosts in " + paths.size() + " bulk request(s)"
 				+ (fallbacks == 0 ? "" : ", " + fallbacks
-						+ " batch(es) read per host after the bulk read failed"));
+						+ " batch(es) read per host after the bulk read failed")
+				+ (unread == 0 ? "" : ", " + unread + " host(s) unread"));
+		// Review N5: some hosts unread is a partial refresh. The caller's
+		// cache reuses its last good list instead (or, with none, uses this
+		// one for the cycle without keeping it), so an unread host does not
+		// lose its LLDP claimant for 15 minutes.
+		if (unread > 0) {
+			throw new RefreshCache.Partial("vmnic stitch: the properties of "
+					+ unread + " of " + pending.size() + " hosts could not be read",
+					out);
+		}
 		return out;
 	}
 

@@ -19,6 +19,16 @@ import java.util.function.BiConsumer;
  * objects for the cycle). Nothing is fabricated: a reused value is one the
  * source returned.
  *
+ * <p><b>A partial refresh</b> (review N5) is thrown by the loader as a
+ * {@link Partial} carrying what it did read. It counts as a failed refresh
+ * when a usable last good value exists (that value is reused and reported);
+ * otherwise the partial value is returned for this call only and not
+ * cached, so the next call tries again, as before build 15.
+ *
+ * <p><b>A clock that steps back</b> (review W1): a value whose fetch time is
+ * after the current time has an unknown age. It is treated as expired,
+ * never as fresh, and is not reused after a failed refresh either.
+ *
  * <p>An {@link InterruptedException} (Stop Collecting) is thrown, never
  * absorbed. Thread safety: every method is {@code synchronized}; a refresh
  * runs under the lock.
@@ -28,6 +38,24 @@ final class RefreshCache<T> {
 	/** Fetches the value (contacts the source). */
 	interface Loader<T> {
 		T load() throws Exception;
+	}
+
+	/**
+	 * Thrown by a loader that read only part of the value. Stackless: it is
+	 * a result, not a fault to trace.
+	 */
+	static final class Partial extends Exception {
+		private static final long serialVersionUID = 1L;
+		private final transient Object value;
+
+		Partial(String message, Object value) {
+			super(message, null, false, false);
+			this.value = value;
+		}
+
+		Object value() {
+			return value;
+		}
 	}
 
 	private final SnapshotCache.Clock clock;
@@ -51,9 +79,11 @@ final class RefreshCache<T> {
 	 * milliseconds; otherwise the failure is thrown. A loader that returns
 	 * {@code null} caches nothing.
 	 */
+	@SuppressWarnings("unchecked")
 	synchronized T get(Loader<T> loader, BiConsumer<Exception, Long> onReuse)
 			throws Exception {
-		if (value != null && clock.millis() - loadedAt < refreshMs) {
+		long now = clock.millis();
+		if (value != null && now >= loadedAt && now - loadedAt < refreshMs) {
 			return value;
 		}
 		try {
@@ -67,7 +97,7 @@ final class RefreshCache<T> {
 			throw e;
 		} catch (Exception e) {
 			long age = clock.millis() - loadedAt;
-			if (value != null && age < maxStaleMs) {
+			if (value != null && age >= 0 && age < maxStaleMs) {
 				if (onReuse != null) {
 					try {
 						onReuse.accept(e, age);
@@ -76,6 +106,9 @@ final class RefreshCache<T> {
 					}
 				}
 				return value;
+			}
+			if (e instanceof Partial) {
+				return (T) ((Partial) e).value(); // this call only, not cached
 			}
 			throw e;
 		}

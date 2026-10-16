@@ -21,6 +21,8 @@ public final class RefreshCacheTest {
 		failureAfterMaxStaleThrows();
 		interruptIsNeverAbsorbed();
 		nullCachesNothing();
+		clockSteppedBackIsExpired();
+		partialRefresh();
 		System.out.println("RefreshCacheTest: all assertions passed");
 	}
 
@@ -113,5 +115,48 @@ public final class RefreshCacheTest {
 		T.eq(null, c.get(() -> { loads.incrementAndGet(); return null; }, null), "null");
 		c.get(() -> { loads.incrementAndGet(); return null; }, null);
 		T.eq(2, loads.get(), "null is not cached");
+	}
+
+	/** Review W1: a fetch time after "now" is an unknown age, never fresh. */
+	static void clockSteppedBackIsExpired() throws Exception {
+		AtomicLong now = new AtomicLong(100 * MIN);
+		AtomicInteger loads = new AtomicInteger();
+		RefreshCache<String> c = new RefreshCache<>(now::get, 15 * MIN, 60 * MIN);
+		RefreshCache.Loader<String> ok = () -> "v" + loads.incrementAndGet();
+		c.get(ok, null);
+		now.set(40 * MIN); // clock stepped back an hour
+		T.eq("v2", c.get(ok, null), "not served as fresh: refetched");
+		T.eq(2, loads.get(), "refetched once");
+		now.set(10 * MIN); // stepped back again, then the refresh fails
+		try {
+			c.get(() -> { throw new IOException("down"); }, (e, a) -> {
+				throw new AssertionError("an unknown age must not be reused");
+			});
+			throw new AssertionError("failure with only an unknown-age value is thrown");
+		} catch (IOException expected) {
+			// no stale reuse
+		}
+	}
+
+	/** Review N5: a partial refresh reuses the last good value, else serves once. */
+	static void partialRefresh() throws Exception {
+		AtomicLong now = new AtomicLong(0);
+		AtomicInteger loads = new AtomicInteger();
+		RefreshCache<String> c = new RefreshCache<>(now::get, 15 * MIN, 60 * MIN);
+		RefreshCache.Loader<String> partial = () -> {
+			loads.incrementAndGet();
+			throw new RefreshCache.Partial("2 of 10 hosts unread", "partial");
+		};
+		T.eq("partial", c.get(partial, (e, a) -> {
+			throw new AssertionError("nothing to reuse yet");
+		}), "no last good: the partial value serves this call");
+		T.eq("partial", c.get(partial, null), "not cached: tried again");
+		T.eq(2, loads.get(), "a partial result is refetched next call");
+		T.eq("full", c.get(() -> "full", null), "full read cached");
+		now.set(16 * MIN);
+		AtomicLong age = new AtomicLong(-1);
+		T.eq("full", c.get(partial, (e, a) -> age.set(a)),
+				"partial refresh: the last good value is reused");
+		T.eq(16 * MIN, age.get(), "reuse reported");
 	}
 }

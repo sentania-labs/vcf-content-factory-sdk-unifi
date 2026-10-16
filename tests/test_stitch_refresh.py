@@ -37,6 +37,8 @@ def main():
     assert '"resourcePropertiesList"' in ST
     assert "unread == pending.size()" in ST, \
         "a refresh that read no host would be cached as good"
+    assert re.search(r"if \(unread > 0\) \{\s*throw new RefreshCache\.Partial\(", ST), \
+        "a partly failed refresh would be cached for 15 minutes (review N5)"
     for body in (ST, SRC):
         assert "catch (InterruptedException e) {\n\t\t\tthrow e;" in body \
             or "catch (InterruptedException e) {\n\t\t\t\tthrow e;" in body

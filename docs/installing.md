@@ -8,8 +8,9 @@
   or a self-hosted Network controller — reachable from the VCF Operations
   collector on **TCP 443** (HTTPS).
 - A **dedicated local UniFi account** with the **View Only** role (see
-  Account below), with access to the **Network API** (and the **Protect
-  API**, if you want NVR / camera objects).
+  Account below; View Only is to be confirmed on devel), with access to
+  the **Network API** (and the **Protect API**, if you want NVR / camera
+  objects).
 - For Protect objects, the **UniFi Protect** application must be installed
   and running on the console.
 
@@ -28,7 +29,12 @@ pack only:
 - **View Only role** in the Network application, and in Protect too if you
   want NVR and camera objects. The adapter only reads (see below); an
   administrator account is not needed and widens the blast radius if the
-  stored password leaks.
+  stored password leaks. **To be confirmed on devel:** that a View Only
+  account can read everything the pack reads, including `stat/sysinfo`
+  (the site's Version and Timezone, build 15) and the Protect bootstrap.
+  If a call is refused, the pack still collects the rest, but each
+  refused call costs a re-login per cycle; use an account with read
+  access to that application until this is confirmed.
 - **A dedicated account**, so a password change or lockout of a person's
   account does not stop collection, and the controller's logs show the
   adapter's logins under its own name.
@@ -36,8 +42,10 @@ pack only:
 ## Permissions Required
 
 The controller account needs read access to the Network API (sites,
-devices, ports, radios, statistics) and, for camera monitoring, read access
-to the Protect API (NVR and camera state). A read-capable account is
+devices, ports, radios, statistics, and since build 15 the per-site
+`stat/sysinfo` controller information; that a View Only account may read
+it is to be confirmed on devel) and, for camera monitoring, read access to
+the Protect API (NVR and camera state). A read-capable account is
 sufficient — the adapter only reads; it makes no configuration changes on
 the controller. The single write-shaped call is the login `POST` that
 establishes the session.

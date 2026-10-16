@@ -1745,7 +1745,9 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 							+ siteName + ": " + e.getMessage());
 				}
 				// Build 15 (issue #18): optional, for the site's version and
-				// timezone properties only. A failure costs those two
+				// timezone properties only. Review W3: that a View Only
+				// account may read stat/sysinfo is to be confirmed on devel
+				// (a refusal costs a re-login and this INFO line per cycle). A failure costs those two
 				// properties this cycle (INFO), nothing else.
 				try {
 					SimpleJson info = api.statSysinfo(siteName).get("data").get(0);

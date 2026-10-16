@@ -64,6 +64,12 @@ Generated from `describe.xml` and `resources.properties` for build 1.0.0.4.
 | `uptime` | Uptime | metric | sec | yes |
 | `num_sta` | Connected Clients | metric | — | yes |
 
+#### Status
+
+| Key | Label | Type | Unit | Monitored |
+|---|---|---|---|---|
+| `state` | State (1 = connected) | metric |  | yes |
+
 #### Temperature
 
 | Key | Label | Type | Unit | Monitored |
@@ -101,8 +107,10 @@ Generated from `describe.xml` and `resources.properties` for build 1.0.0.4.
 
 | Key | Label | Type | Unit | Monitored |
 |---|---|---|---|---|
-| `tx_bytes` | TX Bytes | metric | bytes/s | yes |
-| `rx_bytes` | RX Bytes | metric | bytes/s | yes |
+| `tx_bytes` | TX Bytes | metric | bytes | yes |
+| `rx_bytes` | RX Bytes | metric | bytes | yes |
+| `tx_rate` | TX Rate | metric | bytes/s | yes |
+| `rx_rate` | RX Rate | metric | bytes/s | yes |
 
 #### Health
 
@@ -137,6 +145,12 @@ Generated from `describe.xml` and `resources.properties` for build 1.0.0.4.
 | `uptime` | Uptime | metric | sec | yes |
 | `num_sta` | Connected Clients | metric | — | yes |
 | `satisfaction` | Satisfaction | metric | % | yes |
+
+#### Status
+
+| Key | Label | Type | Unit | Monitored |
+|---|---|---|---|---|
+| `state` | State (1 = connected) | metric |  | yes |
 
 #### PoE
 
@@ -174,6 +188,8 @@ Generated from `describe.xml` and `resources.properties` for build 1.0.0.4.
 | `rx_bytes` | RX Bytes | metric | bytes | yes |
 | `tx_errors` | TX Errors | metric | — | yes |
 | `rx_errors` | RX Errors | metric | — | yes |
+| `tx_rate` | TX Rate | metric | bytes/s | yes |
+| `rx_rate` | RX Rate | metric | bytes/s | yes |
 
 #### Status
 
@@ -238,6 +254,12 @@ Generated from `describe.xml` and `resources.properties` for build 1.0.0.4.
 | `num_sta` | Connected Clients | metric | — | yes |
 | `satisfaction` | Satisfaction | metric | % | yes |
 
+#### Status
+
+| Key | Label | Type | Unit | Monitored |
+|---|---|---|---|---|
+| `state` | State (1 = connected) | metric |  | yes |
+
 #### Configuration
 
 | Key | Label | Type | Unit | Monitored |
@@ -277,6 +299,8 @@ Generated from `describe.xml` and `resources.properties` for build 1.0.0.4.
 |---|---|---|---|---|
 | `tx_bytes` | TX Bytes | metric | bytes | yes |
 | `rx_bytes` | RX Bytes | metric | bytes | yes |
+| `tx_rate` | TX Rate | metric | bytes/s | yes |
+| `rx_rate` | RX Rate | metric | bytes/s | yes |
 
 #### Configuration
 
@@ -339,7 +363,7 @@ Generated from `describe.xml` and `resources.properties` for build 1.0.0.4.
 | `firmware` | Firmware | property | — | — |
 | `name` | Name | property | — | — |
 | `host_type` | Host Type | property | — | — |
-| `recording_retention_mode` | Retention Mode | property | — | — |
+| `recording_retention_days` | Recording Retention (days) | property (numeric) |  |  |
 | `camera_count` | Camera Count | property | — | — |
 
 ---
@@ -353,7 +377,7 @@ Generated from `describe.xml` and `resources.properties` for build 1.0.0.4.
 | Key | Label | Type | Unit | Monitored |
 |---|---|---|---|---|
 | `uptime` | Uptime | metric | sec | yes |
-| `last_motion` | Last Motion | metric | sec | no |
+| `seconds_since_last_motion` | Seconds Since Last Motion | metric | sec | no |
 | `state` | State | property | — | — |
 | `is_connected` | Connected | property | — | — |
 | `is_recording` | Recording | property | — | — |

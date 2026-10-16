@@ -880,6 +880,8 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		int adopted = 0;
 		for (SimpleJson dev : s.devicesForSite(siteName).get("data").asList()) {
 			SimpleJson a = dev.get("adopted");
+			// Review N8: only devices the inventory discovers (with a MAC).
+			if (deviceMac(dev) == null) continue;
 			if (a.isNull() || a.asBoolean()) adopted++;
 		}
 		prop(out, "Configuration|device_count", String.valueOf(adopted));
@@ -1087,7 +1089,8 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 			}
 		}
 		prop(out, "Status|up", port.get("up").asBoolean() ? "true" : "false");
-		prop(out, "Status|speed", String.valueOf(port.get("speed").asLong()));
+		// Review N1: blank when absent, never "0" (a down port reads 0).
+		prop(out, "Status|speed", port.get("speed").asString(""));
 		prop(out, "Status|duplex",
 				port.get("full_duplex").asBoolean() ? "Full" : "Half");
 		prop(out, "Status|is_uplink",
@@ -1208,10 +1211,11 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 			for (SimpleJson rt : radioTable.asList()) {
 				if (radioCode.equals(rt.get("radio").asString(""))) {
 					prop(out, "Configuration|ht", rt.get("ht").asString(""));
+					// Review N1: blank when absent, never "0".
 					prop(out, "Configuration|min_txpower",
-							String.valueOf(rt.get("min_txpower").asLong()));
+							rt.get("min_txpower").asString(""));
 					prop(out, "Configuration|max_txpower",
-							String.valueOf(rt.get("max_txpower").asLong()));
+							rt.get("max_txpower").asString(""));
 					break;
 				}
 			}
@@ -1328,7 +1332,7 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		prop(out, "Hardware|is_wireless", wireless ? "true" : "false");
 		SimpleJson wired = cam.get("wiredConnectionState");
 		prop(out, "Hardware|phy_rate", !wired.isNull()
-				? String.valueOf(wired.get("phyRate").asLong()) : "");
+				? wired.get("phyRate").asString("") : ""); // review N1
 
 		prop(out, "Network|ip", cam.get("host").asString(""));
 		prop(out, "Network|mac_address", camMac);
@@ -1589,15 +1593,17 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 	}
 
 	/**
-	 * Build 15 (issue #24): releases the current configuration's HTTP
-	 * clients (the login-only client included) and the Suite API stitcher,
-	 * on reconfigure and on discard. Discarding the main client a second
-	 * time after the framework has is harmless (it only clears the session).
+	 * Build 15 (issue #24): releases the current configuration's login-only
+	 * HTTP client and the Suite API stitcher, on reconfigure and on discard.
+	 * The main client is the framework's to release (review N2).
 	 */
 	private void discardConfigured() {
 		Configured c = this.configured;
 		if (c != null) {
-			c.clients.discard();
+			// Review N2: the login-only client only. The framework releases
+			// the main client (onConfigure before configureAdapter, and
+			// super.onDiscard()); Test Connection's finally discards both.
+			HttpClients.discardQuietly(c.clients.login);
 		}
 		SuiteApiStitcher st = this.suiteStitcher;
 		this.suiteStitcher = null;
@@ -1744,6 +1750,8 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 				try {
 					SimpleJson info = api.statSysinfo(siteName).get("data").get(0);
 					if (info.isObject()) s.sysinfoBySite.put(siteName, info);
+				} catch (InterruptedException e) {
+					throw e; // review N4: Stop Collecting reaches the framework
 				} catch (Exception e) {
 					adapter.logInfo("Snapshot: stat/sysinfo not available for "
 							+ "site " + siteName + " (version and timezone "

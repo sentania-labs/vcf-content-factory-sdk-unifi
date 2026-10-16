@@ -34,6 +34,8 @@ def main():
         "device_count is still read from the /self/sites entry"
     assert "s.devicesForSite(siteName)" in site and '"adopted"' in site, \
         "device_count is not counted from the site's adopted devices"
+    assert "if (deviceMac(dev) == null) continue;" in site, \
+        "device_count counts devices the inventory skips (review N8)"
     assert site.index("requireSiteRead") < site.index("devicesForSite"), \
         "device_count could count an unread site's (empty) device list"
     for key in ("version", "timezone"):
@@ -45,6 +47,10 @@ def main():
     assert 'sitePath(site, "stat/sysinfo")' in CLIENT, "no stat/sysinfo call"
     build = method_body("Snapshot", "build")
     assert "api.statSysinfo(siteName)" in build, "sysinfo not read per site"
+    sys_try = build[build.index("api.statSysinfo(siteName)"):]
+    sys_try = sys_try[:sys_try.index("catch (Exception e)")]
+    assert "catch (InterruptedException e) {" in sys_try, \
+        "the sysinfo catch swallows an interrupt (review N4)"
     print("test_site_properties: all assertions passed")
 
 

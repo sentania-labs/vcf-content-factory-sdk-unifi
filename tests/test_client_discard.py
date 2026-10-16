@@ -5,8 +5,8 @@ buildHttpClient builds two clients: the authenticated one and a raw
 login-only one its login callback posts the credentials with. Both are
 returned together (HttpClients) and discarded together: in Test
 Connection's finally, on reconfigure (VcfCfAdapter.onConfigure discards the
-previous main client; the adapter releases the login client and the Suite
-API stitcher) and in onDiscard. The checks are structural because the
+previous main client; the adapter releases only the login client and the
+Suite API stitcher, review N2) and in onDiscard. The checks are structural because the
 adapter class needs the SDK jar; stdlib only, run from anywhere
 (ci/run_java_tests.sh runs it).
 """
@@ -46,8 +46,10 @@ def main():
         "Test Connection does not keep the pair, so the login client leaks"
 
     helper = method_body("void", "discardConfigured")
-    assert "c.clients.discard()" in helper, \
-        "discardConfigured does not release the configuration's clients"
+    assert "HttpClients.discardQuietly(c.clients.login)" in helper, \
+        "discardConfigured does not release the configuration's login client"
+    assert "c.clients.discard()" not in helper and "clients.main" not in helper, \
+        "discardConfigured discards the main client the framework already released (review N2)"
     assert "st.discard()" in helper, \
         "discardConfigured does not release the Suite API stitcher"
 

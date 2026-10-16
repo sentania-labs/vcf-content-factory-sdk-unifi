@@ -52,6 +52,20 @@ def main():
         assert "UniFiValues.publishesPerformance(deviceConnected(dev))" in body, \
             f"{name} publishes metrics while its device is disconnected"
 
+    # Review N3: the switch PoE metrics are gated on the switch's state too.
+    switch = method_body("void", "collectSwitch")
+    assert 'if (perf) metricIfPresent(out, "PoE|total_max_power", maxPower);' in switch, \
+        "total_max_power published while the switch is disconnected"
+    assert "if (perf && poeReported) {" in switch, \
+        "PoE consumption and budget published while the switch is disconnected"
+    # Review N1: absent numeric properties read blank, never "0".
+    for key in ("Status|speed", "Configuration|min_txpower",
+                "Configuration|max_txpower"):
+        m = re.search(r'prop\(out, "' + re.escape(key) + r'",\s*([^;]+)\);', SRC)
+        assert m and 'asString("")' in m.group(1) and "asLong()" not in m.group(1), \
+            f"{key} reads 0 when absent"
+    assert 'wired.get("phyRate").asString("")' in SRC, "phy_rate reads 0 when absent"
+
     state = method_body("boolean", "publishState")
     assert '"Status|state"' in state and "stateMetric(connected)" in state
 

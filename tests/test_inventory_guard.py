@@ -36,6 +36,9 @@ def main():
         line = SRC[line_start:SRC.find("\n", m.end())]
         if "UniFiIds.mac(" in line:
             continue
+        prev_start = SRC.rfind("\n", 0, line_start - 1) + 1
+        if "UniFiIds.discoveredDevice(" in SRC[prev_start:line_start]:
+            continue  # the guard's second argument, on its own line
         # deviceDisplayName only uses the MAC for a display suffix.
         if 'String mac = dev.get("mac").asString("");' in line:
             continue
@@ -53,7 +56,7 @@ def main():
         assert 'UniFiIds.mac(cam.get("mac")' in body, \
             f"{name} does not guard camera MACs"
     # Every guarded read is followed by its skip: no "<mac>_null" keys.
-    for m in re.finditer(r"(?:Integer|String) (\w+) = (?:portIdx\(port\)|deviceMac\(dev\)"
+    for m in re.finditer(r"(?:Integer|String) (\w+) = (?:portIdx\(port\)|deviceMac\(dev\)|radioCode\(radio\)"
                          r"|UniFiIds\.mac\(cam\.get\(\"mac\"\)\.asString\(\)\));\n", SRC):
         var = m.group(1)
         nxt = SRC[m.end():SRC.find("\n", m.end())].strip()
@@ -66,6 +69,24 @@ def main():
             assert "Skipped" in block or "skipped" in block, block
             continue
         sys.exit(f"FAIL: {var} read without its skip: {nxt}")
+    # Peer review 7: radios with no code and an NVR with no MAC.
+    assert 'radio.get("radio").asString("");\n' not in SRC.replace("\r", ""), \
+        "a raw radio code read is left (a blank code becomes <mac>_)"
+    for name, ret in (("enumerateResources", "void"),
+                      ("buildRelationships", "Relationships")):
+        body = method_body(ret, name)
+        assert "radioCode(radio)" in body, f"{name} does not guard radio codes"
+        assert 'UniFiIds.mac(nvr.get("mac").asString())' in body, \
+            f"{name} does not guard the NVR MAC"
+        assert 'nvr.get("mac").asString("")' not in body
+    rel = method_body("Relationships", "buildRelationships")
+    assert "if (nvrKey != null && !cameras.isNull()) {" in rel, \
+        "cameras are parented under an NVR with no identity"
+    assert "if (nvrKey != null && java.util.Objects.equals(siteName," in rel
+    enum = method_body("void", "enumerateResources")
+    assert "if (nvrMac != null) {" in enum
+    build = method_body("Snapshot", "build")
+    assert "skippedRadios++" in build and "skippedNvrs++" in build
     find = method_body("SimpleJson", "findPort")
     assert "portIdx(port)" in find, "findPort matches a missing index as 0"
     build = method_body("Snapshot", "build")

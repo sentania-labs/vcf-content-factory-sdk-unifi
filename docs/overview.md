@@ -154,11 +154,16 @@ logged at debug only, never WARN spam.
   rise).
 
 - **Records with no identity are skipped** (build 15). A device or camera
-  the controller reports without a MAC, and a switch port without a
-  `port_idx` (for example a device pending adoption), is not discovered,
-  not related and not counted in the site's Device Count. Each is logged at
-  DEBUG, and the `UniFi API snapshot` INFO line ends with `skipped with no
-  identity: <n> devices, <n> ports, <n> cameras` when any were skipped.
+  the controller reports without a MAC, a switch port without a
+  `port_idx` and a radio without a radio code (for example on a device
+  pending adoption) is not discovered, not related and not counted in the
+  site's Device Count or the NVR's Camera Count. An NVR without a MAC is
+  not registered either; its cameras still are, with no parent in the
+  tree. Device Count counts only gateways, switches and access points, the
+  types the pack discovers. Each skip is logged at DEBUG, and the `UniFi
+  API snapshot` INFO line ends with `skipped with no identity: <n>
+  devices, <n> ports, <n> radios, <n> cameras, <n> nvr` when any were
+  skipped.
 
 - **Session self-recovery on 401.** UniFi controller sessions expire on the
   server side. Build 5 bundles the framework jar that makes the session

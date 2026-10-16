@@ -589,7 +589,8 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 					SimpleJson radioStats = dev.get("radio_table_stats");
 					if (!radioStats.isNull()) {
 						for (SimpleJson radio : radioStats.asList()) {
-							String radioCode = radio.get("radio").asString("");
+							String radioCode = radioCode(radio);
+							if (radioCode == null) continue; // peer review 7
 							sink.accept(rcOf("UniFiRadio",
 									radioDisplayName(radioCode),
 									"radio_key", mac + "_" + radioCode));
@@ -608,9 +609,14 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		if (s.protect != null) {
 			SimpleJson nvr = s.protect.get("nvr");
 			if (!nvr.isNull()) {
-				sink.accept(rcOf("UniFiNvr", nvr.get("name").asString("NVR"),
-						"nvr_mac", nvr.get("mac").asString("")));
-				nvrs++;
+				// Peer review 7: an NVR with no MAC has no identity and is
+				// not registered; its cameras still are (their own MAC).
+				String nvrMac = UniFiIds.mac(nvr.get("mac").asString());
+				if (nvrMac != null) {
+					sink.accept(rcOf("UniFiNvr", nvr.get("name").asString("NVR"),
+							"nvr_mac", nvrMac));
+					nvrs++;
+				}
 				SimpleJson cams = s.protect.get("cameras");
 				if (!cams.isNull()) {
 					for (SimpleJson cam : cams.asList()) {
@@ -887,8 +893,10 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		int adopted = 0;
 		for (SimpleJson dev : s.devicesForSite(siteName).get("data").asList()) {
 			SimpleJson a = dev.get("adopted");
-			// Review N8: only devices the inventory discovers (with a MAC).
-			if (deviceMac(dev) == null) continue;
+			// Review N8, peer review 6: only devices discovery registers (a
+			// gateway, switch or access point with a MAC).
+			if (!UniFiIds.discoveredDevice(dev.get("type").asString(""),
+					dev.get("mac").asString())) continue;
 			if (a.isNull() || a.asBoolean()) adopted++;
 		}
 		prop(out, "Configuration|device_count", String.valueOf(adopted));
@@ -1305,8 +1313,12 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		}
 
 		SimpleJson cameras = s.protect.get("cameras");
-		prop(out, "Configuration|camera_count",
-				String.valueOf(cameras.isNull() ? 0 : cameras.size()));
+		// Peer review 6: only cameras discovery registers (with a MAC).
+		int cameraCount = 0;
+		for (SimpleJson cam : cameras.asList()) {
+			if (UniFiIds.mac(cam.get("mac").asString()) != null) cameraCount++;
+		}
+		prop(out, "Configuration|camera_count", String.valueOf(cameraCount));
 	}
 
 	private void collectCamera(ResourceConfig rc, Snapshot s, List<MetricData> out) {
@@ -1412,7 +1424,8 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 					SimpleJson radios = dev.get("radio_table_stats");
 					if (!radios.isNull()) {
 						for (SimpleJson radio : radios.asList()) {
-							String code = radio.get("radio").asString("");
+							String code = radioCode(radio);
+							if (code == null) continue; // peer review 7
 							rb.parent(devKey, rb.resource("UniFiRadio",
 									radioDisplayName(code), "radio_key", mac + "_" + code));
 						}
@@ -1451,20 +1464,24 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 				String siteDesc = firstSite.get("desc").asString(siteName);
 				ResourceKey siteKey = rb.resource("UniFiSite", siteDesc,
 						"site_name", siteName);
-				ResourceKey nvrKey = rb.resource("UniFiNvr",
-						nvr.get("name").asString("NVR"),
-						"nvr_mac", nvr.get("mac").asString(""));
+				// Peer review 7: an NVR with no MAC is not registered, so it
+				// has no edges: no site to NVR edge and no NVR to camera
+				// edges. Its cameras are still registered and collect, with
+				// no parent in the tree.
+				String nvrMac = UniFiIds.mac(nvr.get("mac").asString());
+				ResourceKey nvrKey = nvrMac == null ? null : rb.resource("UniFiNvr",
+						nvr.get("name").asString("NVR"), "nvr_mac", nvrMac);
 				// Build 14 (issue #19): not under a site that was not read
 				// (full-set would drop that site's device edges); the NVR
 				// keeps its existing site edge and its cameras below. See
 				// SiteIsolation.nvrParentSite.
-				if (java.util.Objects.equals(siteName, SiteIsolation.nvrParentSite(
-						s.siteNames(), s.failedSites))) {
+				if (nvrKey != null && java.util.Objects.equals(siteName,
+						SiteIsolation.nvrParentSite(s.siteNames(), s.failedSites))) {
 					rb.parent(siteKey, nvrKey);
 				}
 
 				SimpleJson cameras = s.protect.get("cameras");
-				if (!cameras.isNull()) {
+				if (nvrKey != null && !cameras.isNull()) {
 					for (SimpleJson cam : cameras.asList()) {
 						String camMac = UniFiIds.mac(cam.get("mac").asString());
 						if (camMac == null) continue; // build 15, issue #23
@@ -1526,12 +1543,17 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 	// -----------------------------------------------------------------------
 
 	private static boolean isGateway(String type) {
-		return "udm".equals(type) || "ugw".equals(type) || "uxg".equals(type);
+		return UniFiIds.isGatewayType(type);
 	}
 
 	/** Build 15 (issue #23): the device MAC, or null when it has none. */
 	private static String deviceMac(SimpleJson dev) {
 		return UniFiIds.mac(dev.get("mac").asString());
+	}
+
+	/** Build 15 (peer review 7): the radio code, or null when it has none. */
+	private static String radioCode(SimpleJson radio) {
+		return UniFiIds.radioCode(radio.get("radio").asString());
 	}
 
 	/** Build 15 (issue #23): the port index, or null when it has none. */
@@ -1578,6 +1600,8 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 	private static SimpleJson findRadioStats(SimpleJson dev, String radioCode) {
 		SimpleJson radios = dev.get("radio_table_stats");
 		if (radios.isNull()) return null;
+		// Peer review 7: a blank code is no radio's identity.
+		if (UniFiIds.radioCode(radioCode) == null) return null;
 		for (SimpleJson radio : radios.asList()) {
 			if (radioCode.equals(radio.get("radio").asString(""))) return radio;
 		}
@@ -1718,6 +1742,7 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 			int devTotal = 0;
 			// Build 15 (issue #23): no-identity records, skipped everywhere.
 			int skippedDevices = 0, skippedPorts = 0, skippedCameras = 0;
+			int skippedRadios = 0, skippedNvrs = 0; // peer review 7
 			for (String siteName : siteNames) {
 				SimpleJson devices = deviceReads.bySite.get(siteName);
 				if (devices == null) {
@@ -1739,6 +1764,16 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 						}
 						s.deviceByMac.put(mac, dev);
 						devTotal++;
+						if ("uap".equals(dev.get("type").asString(""))) {
+							for (SimpleJson radio : dev.get("radio_table_stats").asList()) {
+								if (radioCode(radio) == null) {
+									skippedRadios++;
+									debugQuietly(inventoryLog, "UniFi inventory: "
+											+ "skipped a radio with no radio code "
+											+ "on access point " + mac);
+								}
+							}
+						}
 						if ("usw".equals(dev.get("type").asString(""))) {
 							for (SimpleJson port : dev.get("port_table").asList()) {
 								if (portIdx(port) == null) {
@@ -1806,6 +1841,13 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 				SimpleJson protect = api.protectBootstrap();
 				if (!protect.get("nvr").isNull()) {
 					s.protect = protect;
+					if (UniFiIds.mac(protect.get("nvr").get("mac").asString()) == null) {
+						skippedNvrs++;
+						debugQuietly(inventoryLog, "UniFi inventory: skipped the "
+								+ "NVR with no MAC (name=" + protect.get("nvr")
+										.get("name").asString("") + "); its cameras "
+								+ "are registered with no parent");
+					}
 					SimpleJson cams = protect.get("cameras");
 					if (!cams.isNull()) {
 						for (SimpleJson cam : cams.asList()) {
@@ -1832,10 +1874,13 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 					+ "protect=" + (s.protect != null)
 					+ (s.failedSites.isEmpty() ? ""
 							: " / unreadable sites=" + s.failedSites.keySet())
-					+ (skippedDevices + skippedPorts + skippedCameras == 0 ? ""
+					+ (skippedDevices + skippedPorts + skippedCameras
+							+ skippedRadios + skippedNvrs == 0 ? ""
 							: " / skipped with no identity: " + skippedDevices
 									+ " devices, " + skippedPorts + " ports, "
-									+ skippedCameras + " cameras"));
+									+ skippedRadios + " radios, "
+									+ skippedCameras + " cameras, "
+									+ skippedNvrs + " nvr"));
 			return s;
 		}
 

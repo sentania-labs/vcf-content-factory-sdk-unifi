@@ -63,6 +63,33 @@ final class UniFiIds {
 	}
 
 	/**
+	 * Peer review 7: the radio code ({@code ng}, {@code na}, {@code 6e}) to
+	 * use in a radio identifier, or {@code null} when it is missing or
+	 * blank (every such radio would collapse onto {@code <mac>_}).
+	 */
+	static String radioCode(String raw) {
+		if (raw == null || raw.trim().isEmpty()) return null;
+		return raw;
+	}
+
+	/** A gateway's {@code type}: UDM, USG or UXG. */
+	static boolean isGatewayType(String type) {
+		return "udm".equals(type) || "ugw".equals(type) || "uxg".equals(type);
+	}
+
+	/**
+	 * Peer review 6: whether discovery registers this {@code stat/device}
+	 * record: a gateway, switch ({@code usw}) or access point ({@code uap})
+	 * with a MAC. Other types (for example a camera or a power device the
+	 * Network application lists) and MAC-less records are not discovered,
+	 * so they are not counted in the site's Device Count either.
+	 */
+	static boolean discoveredDevice(String type, String rawMac) {
+		boolean kind = isGatewayType(type) || "usw".equals(type) || "uap".equals(type);
+		return kind && mac(rawMac) != null;
+	}
+
+	/**
 	 * Percent-encodes {@code raw} as one URL path segment (UTF-8; a space is
 	 * {@code %20}, never {@code +}; {@code /}, {@code ?}, {@code #} and
 	 * {@code %} are encoded). A name of letters, digits, {@code -},

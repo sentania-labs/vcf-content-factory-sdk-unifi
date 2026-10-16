@@ -10,6 +10,8 @@ public final class UniFiIdsTest {
 		macGuard();
 		portIdxGuard();
 		siteSegment();
+		radioGuard();
+		discoveredDevices();
 		System.out.println("UniFiIdsTest: all assertions passed");
 	}
 
@@ -32,6 +34,26 @@ public final class UniFiIdsTest {
 		T.eq(3, UniFiIds.portIdx("3"), "integer port_idx");
 		T.eq(3, UniFiIds.portIdx("3.0"), "decimal-form integer port_idx");
 		T.eq(0, UniFiIds.portIdx("0"), "a real port 0 is kept");
+	}
+
+	/** Peer review 7: a blank radio code has no identity. */
+	static void radioGuard() {
+		T.eq(null, UniFiIds.radioCode(null), "missing code");
+		T.eq(null, UniFiIds.radioCode(""), "empty code");
+		T.eq(null, UniFiIds.radioCode(" "), "blank code");
+		T.eq("na", UniFiIds.radioCode("na"), "real code unchanged");
+	}
+
+	/** Peer review 6: Device Count counts what discovery registers. */
+	static void discoveredDevices() {
+		for (String t : new String[]{"udm", "ugw", "uxg", "usw", "uap"}) {
+			T.check(UniFiIds.discoveredDevice(t, "aa:bb"), t + " with a MAC");
+			T.check(!UniFiIds.discoveredDevice(t, ""), t + " without a MAC");
+			T.check(!UniFiIds.discoveredDevice(t, null), t + " with no MAC field");
+		}
+		T.check(!UniFiIds.discoveredDevice("uph", "aa:bb"), "other types are not");
+		T.check(!UniFiIds.discoveredDevice("", "aa:bb"), "no type is not");
+		T.check(!UniFiIds.discoveredDevice(null, "aa:bb"), "null type is not");
 	}
 
 	/** #22: the site is one path segment; ordinary names are unchanged. */

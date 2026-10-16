@@ -34,8 +34,13 @@ def main():
         "device_count is still read from the /self/sites entry"
     assert "s.devicesForSite(siteName)" in site and '"adopted"' in site, \
         "device_count is not counted from the site's adopted devices"
-    assert "if (deviceMac(dev) == null) continue;" in site, \
-        "device_count counts devices the inventory skips (review N8)"
+    assert re.search(r"if \(!UniFiIds\.discoveredDevice\(dev\.get\(\"type\"\)\.asString\(\"\"\),"
+                     r"\s*dev\.get\(\"mac\"\)\.asString\(\)\)\) continue;", site), \
+        "device_count counts devices discovery does not register (review N8, peer 6)"
+    nvr = method_body("void", "collectNvr")
+    assert re.search(r'if \(UniFiIds\.mac\(cam\.get\("mac"\)\.asString\(\)\) != null\) cameraCount\+\+;', nvr), \
+        "camera_count counts cameras the guard skips (peer review 6)"
+    assert "cameras.size()" not in nvr
     assert site.index("requireSiteRead") < site.index("devicesForSite"), \
         "device_count could count an unread site's (empty) device list"
     for key in ("version", "timezone"):

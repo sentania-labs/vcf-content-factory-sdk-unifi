@@ -15,8 +15,8 @@ import java.util.function.BiConsumer;
  * {@code maxStaleMs} after it was fetched, and reports the reuse through
  * the caller's sink so it can log it; the next call tries again. With no
  * value, or one older than {@code maxStaleMs}, the failure is thrown and
- * the caller degrades as it did before build 15 (no stitch, no Protect
- * objects for the cycle). Nothing is fabricated: a reused value is one the
+ * the caller degrades as it did before build 15 (no vmnic stitch for the
+ * cycle). Nothing is fabricated: a reused value is one the
  * source returned.
  *
  * <p><b>A partial refresh</b> (review N5) is thrown by the loader as a

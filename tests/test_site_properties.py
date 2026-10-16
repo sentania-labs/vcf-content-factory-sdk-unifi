@@ -49,7 +49,7 @@ def main():
     assert "api.statSysinfo(siteName)" in build, "sysinfo not read per site"
     sys_try = build[build.index("api.statSysinfo(siteName)"):]
     sys_try = sys_try[:sys_try.index("catch (Exception e)")]
-    assert "catch (InterruptedException e) {" in sys_try, \
+    assert re.search(r"catch \(InterruptedException e\) \{\s*throw e;", sys_try), \
         "the sysinfo catch swallows an interrupt (review N4)"
     print("test_site_properties: all assertions passed")
 

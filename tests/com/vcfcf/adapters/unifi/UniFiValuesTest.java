@@ -11,6 +11,8 @@ public final class UniFiValuesTest {
 		numbersAndNumericStrings();
 		satisfactionNoData();
 		deviceState();
+		secondsSinceLastMotion();
+		retentionDays();
 		System.out.println("UniFiValuesTest: all assertions passed");
 	}
 
@@ -65,5 +67,25 @@ public final class UniFiValuesTest {
 				"disconnected: state only");
 		T.check(UniFiValues.publishesPerformance(null),
 				"unknown: present fields only");
+	}
+
+	/** #16: an age in seconds, not the epoch value divided by 1000. */
+	static void secondsSinceLastMotion() {
+		long now = 1_760_000_000_000L;
+		T.eq(90.0, UniFiValues.secondsSince(now - 90_000.0, now), "90 s ago");
+		T.eq(0.0, UniFiValues.secondsSince((double) now, now), "just now");
+		T.eq(0.0, UniFiValues.secondsSince(now + 5_000.0, now),
+				"clock skew reads 0, not negative");
+		T.eq(null, UniFiValues.secondsSince(null, now), "absent");
+		T.eq(null, UniFiValues.secondsSince(0.0, now), "never had motion");
+	}
+
+	/** #16: retention as a number of days. */
+	static void retentionDays() {
+		T.eq(30.0, UniFiValues.millisToDays(2_592_000_000.0), "30 days");
+		T.eq(1.5, UniFiValues.millisToDays(129_600_000.0), "36 hours");
+		T.eq(0.0, UniFiValues.millisToDays(0.0), "0 is a real value");
+		T.eq(null, UniFiValues.millisToDays(null), "absent");
+		T.eq(null, UniFiValues.millisToDays(-1.0), "negative");
 	}
 }

@@ -823,6 +823,15 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		metricIfPresent(out, "System|num_sta", dev.get("num_sta"));
 	}
 
+	/**
+	 * Build 15 (issue #16): a numeric property (describe.xml
+	 * {@code dataType="float" isProperty="true"}).
+	 */
+	private static void numericProp(List<MetricData> out, String key, double value) {
+		out.add(new MetricData(new MetricKey(true, key),
+				System.currentTimeMillis(), value));
+	}
+
 	private static void prop(List<MetricData> out, String key, String value) {
 		out.add(new MetricData(new MetricKey(true, key),
 				System.currentTimeMillis(), value != null ? value : ""));
@@ -1234,8 +1243,14 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		prop(out, "Configuration|firmware", nvr.get("firmwareVersion").asString(""));
 		prop(out, "Configuration|name", nvr.get("name").asString("NVR"));
 		prop(out, "Configuration|host_type", nvr.get("type").asString(""));
-		prop(out, "Configuration|recording_retention_mode",
-				nvr.get("recordingRetentionDurationMs").asString(""));
+		// Build 15 (issue #16): replaces recording_retention_mode, which
+		// carried the raw millisecond duration as text under a "mode" name.
+		// Published only when the NVR sends the duration.
+		Double retentionDays = UniFiValues.millisToDays(UniFiValues.number(
+				nvr.get("recordingRetentionDurationMs").asString()));
+		if (retentionDays != null) {
+			numericProp(out, "Configuration|recording_retention_days", retentionDays);
+		}
 
 		SimpleJson cameras = s.protect.get("cameras");
 		prop(out, "Configuration|camera_count",
@@ -1254,10 +1269,14 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		// Build 15 (issue #14): uptime only when present.
 		Double camUptime = UniFiValues.number(cam.get("uptime").asString());
 		if (camUptime != null) metric(out, "Status|uptime", camUptime / 1000.0);
-		long lastMotion = cam.get("lastMotion").asLong();
-		if (lastMotion > 0) {
-			metric(out, "Status|last_motion", lastMotion / 1000.0);
-		}
+		// Build 15 (issue #16): an age in seconds, replacing last_motion
+		// (the epoch timestamp divided by 1000 published as "sec"), so "no
+		// motion for X" can be alerted on. Absent when the camera never
+		// recorded motion.
+		metricIfPresent(out, "Status|seconds_since_last_motion",
+				UniFiValues.secondsSince(
+						UniFiValues.number(cam.get("lastMotion").asString()),
+						System.currentTimeMillis()));
 
 		prop(out, "Status|state", cam.get("state").asString(""));
 		prop(out, "Status|is_connected",

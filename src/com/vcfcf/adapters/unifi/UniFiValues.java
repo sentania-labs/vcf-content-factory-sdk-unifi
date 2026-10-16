@@ -74,4 +74,25 @@ final class UniFiValues {
 	static boolean publishesPerformance(Boolean connected) {
 		return !Boolean.FALSE.equals(connected);
 	}
+
+	/**
+	 * Build 15 (issue #16): seconds from an epoch-millisecond timestamp
+	 * (Protect's {@code lastMotion}) to {@code nowMs}, or {@code null} when
+	 * the timestamp is absent or not positive (never had motion). A
+	 * timestamp ahead of the collector's clock reads 0, not a negative age.
+	 */
+	static Double secondsSince(Double epochMs, long nowMs) {
+		if (epochMs == null || epochMs <= 0) return null;
+		return Math.max(0.0, (nowMs - epochMs) / 1000.0);
+	}
+
+	/**
+	 * Build 15 (issue #16): a duration in milliseconds (Protect's
+	 * {@code recordingRetentionDurationMs}) in days, or {@code null} when
+	 * absent or negative. Fractions are kept (36 hours is 1.5).
+	 */
+	static Double millisToDays(Double ms) {
+		if (ms == null || ms < 0) return null;
+		return ms / 86_400_000.0;
+	}
 }

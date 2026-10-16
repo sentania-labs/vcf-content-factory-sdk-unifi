@@ -44,10 +44,10 @@ pack only:
 ## Permissions Required
 
 The controller account needs read access to the Network API (sites,
-devices, ports, radios, statistics, and since build 15 the
-`stat/sysinfo` controller information, read once per cycle; that a View Only account may read
-it is to be confirmed on devel) and, for camera monitoring, read access to
-the Protect API (NVR and camera state). A read-capable account is
+devices, ports, radios, statistics, and since build 15 the `stat/sysinfo`
+controller information, read once per cycle; that a View Only account may
+read it is to be confirmed on devel) and, for camera monitoring, read
+access to the Protect API (NVR and camera state). A read-capable account is
 sufficient — the adapter only reads; it makes no configuration changes on
 the controller. The single write-shaped call is the login `POST` that
 establishes the session.

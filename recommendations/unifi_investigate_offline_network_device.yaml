@@ -1,0 +1,8 @@
+name: "[VCF Content Factory] UniFi Investigate Offline Network Device"
+description: |
+  The device has stopped reporting to the UniFi controller (disconnected or heartbeat missed).
+
+  First check that the device has power and its link light is on. For a PoE-powered device, check the upstream switch port and the PoE budget on that switch.
+
+  Then check the cable and the uplink port the device connects through, and confirm the controller can reach it on the network. If the device is still unreachable, power-cycle it or re-adopt it from the UniFi controller.
+adapter_kind: unifi_controller

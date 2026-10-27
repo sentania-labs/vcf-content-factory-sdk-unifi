@@ -1,0 +1,23 @@
+name: "[VCF Content Factory] UniFi Uplink Port Down"
+description: >
+  Fires when a switch port that serves as an uplink has lost link. Access ports being down does not trigger it. A switch that loses its only uplink shows as Switch Offline rather than this alert, because the switch can no longer report its own port state.
+adapter_kind: unifi_controller
+resource_kind: UniFiSwitchPort
+type: 19
+sub_type: 18
+wait_cycles: 1
+cancel_cycles: 1
+criticality: CRITICAL
+impact:
+  badge: HEALTH
+symptom_sets:
+  operator: ALL
+  sets:
+    - defined_on: SELF
+      operator: ALL
+      symptoms:
+        - name: "[VCF Content Factory] UniFi Switch Port Link Down"
+        - name: "[VCF Content Factory] UniFi Switch Port Is Uplink"
+recommendations:
+  - name: "[VCF Content Factory] UniFi Investigate Uplink Port Down"
+    priority: 1

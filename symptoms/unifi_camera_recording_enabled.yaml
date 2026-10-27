@@ -1,0 +1,15 @@
+name: "[VCF Content Factory] UniFi Camera Recording Enabled"
+adapter_kind: unifi_controller
+resource_kind: UniFiCamera
+severity: INFO
+wait_cycles: 3
+cancel_cycles: 3
+
+condition:
+  type: property
+  key: Configuration|recording_mode
+  operator: NOT_EQ
+  value: "never"
+
+description: >
+  Informational scoping condition: recording is enabled for the camera (Configuration|recording_mode is not never). Used so the not-recording alert skips cameras deliberately set never to record.

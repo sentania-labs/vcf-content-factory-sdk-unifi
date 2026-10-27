@@ -1,0 +1,22 @@
+name: "[VCF Content Factory] UniFi Access Point Offline"
+description: >
+  Fires when a UniFi access point is disconnected or has missed its heartbeat. Firmware upgrades and adoption do not trigger it. Cancels automatically when the access point reconnects.
+adapter_kind: unifi_controller
+resource_kind: UniFiAccessPoint
+type: 19
+sub_type: 18
+wait_cycles: 1
+cancel_cycles: 1
+criticality: CRITICAL
+impact:
+  badge: HEALTH
+symptom_sets:
+  operator: ALL
+  sets:
+    - defined_on: SELF
+      operator: ALL
+      symptoms:
+        - name: "[VCF Content Factory] UniFi Access Point Offline"
+recommendations:
+  - name: "[VCF Content Factory] UniFi Investigate Offline Network Device"
+    priority: 1

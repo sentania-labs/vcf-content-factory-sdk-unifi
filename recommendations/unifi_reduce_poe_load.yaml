@@ -1,0 +1,8 @@
+name: "[VCF Content Factory] UniFi Reduce Switch PoE Load"
+description: |
+  The switch is drawing close to its total PoE power budget, and new or restarting PoE devices may fail to power up.
+
+  Review which ports draw the most power and move non-critical PoE devices to another switch or to a separate power injector. Disable PoE on ports with devices that do not need it.
+
+  If the load is expected to grow, plan for a switch with a larger PoE budget.
+adapter_kind: unifi_controller

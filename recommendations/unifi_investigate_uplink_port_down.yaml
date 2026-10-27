@@ -1,0 +1,8 @@
+name: "[VCF Content Factory] UniFi Investigate Uplink Port Down"
+description: |
+  An uplink port on a switch has lost link. Devices downstream of this switch may be unreachable.
+
+  Check the cable and transceiver at both ends of the uplink, and confirm the peer device is powered and its port is enabled.
+
+  If the link does not return, replace the cable or SFP module, or move the uplink to a spare port and update the port profile.
+adapter_kind: unifi_controller

@@ -1,0 +1,23 @@
+name: "[VCF Content Factory] UniFi PoE Budget Nearly Exhausted"
+description: >
+  Fires when a connected UniFi switch is using a high share of its PoE power budget. The switch must be connected, so a disconnected switch holding a stale PoE value does not alert.
+adapter_kind: unifi_controller
+resource_kind: UniFiSwitch
+type: 19
+sub_type: 20
+wait_cycles: 1
+cancel_cycles: 1
+criticality: WARNING
+impact:
+  badge: RISK
+symptom_sets:
+  operator: ALL
+  sets:
+    - defined_on: SELF
+      operator: ALL
+      symptoms:
+        - name: "[VCF Content Factory] UniFi Switch PoE Budget High"
+        - name: "[VCF Content Factory] UniFi Switch Connected"
+recommendations:
+  - name: "[VCF Content Factory] UniFi Reduce Switch PoE Load"
+    priority: 1

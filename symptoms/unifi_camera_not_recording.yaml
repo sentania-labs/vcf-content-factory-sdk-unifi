@@ -1,0 +1,15 @@
+name: "[VCF Content Factory] UniFi Camera Not Recording"
+adapter_kind: unifi_controller
+resource_kind: UniFiCamera
+severity: WARNING
+wait_cycles: 3
+cancel_cycles: 3
+
+condition:
+  type: property
+  key: Status|is_recording
+  operator: EQ
+  value: "false"
+
+description: >
+  Triggers when the camera is not recording (Status|is_recording is false). Pair with the connected symptom so a disconnected camera is reported by its own alert.

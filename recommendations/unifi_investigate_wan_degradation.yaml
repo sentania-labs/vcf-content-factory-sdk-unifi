@@ -1,0 +1,8 @@
+name: "[VCF Content Factory] UniFi Investigate WAN Degradation"
+description: |
+  A WAN interface on the gateway shows low availability or high latency.
+
+  Check the modem or ONT and the cable to the gateway WAN port, and look for link flaps in the controller event log. Compare the failing WAN against any secondary WAN to see whether the problem is isolated.
+
+  Run a speed and latency test from the gateway and contact the ISP if the degradation persists.
+adapter_kind: unifi_controller

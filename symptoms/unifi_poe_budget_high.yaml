@@ -1,0 +1,15 @@
+name: "[VCF Content Factory] UniFi Switch PoE Budget High"
+adapter_kind: unifi_controller
+resource_kind: UniFiSwitch
+severity: WARNING
+wait_cycles: 3
+cancel_cycles: 3
+
+condition:
+  type: metric_static
+  key: PoE|poe_budget_used_pct
+  operator: GT_EQ
+  value: 90
+
+description: >
+  Triggers when the switch PoE budget used (PoE|poe_budget_used_pct, adapter-calculated consumption / total_max_power) is 90 percent or more, i.e. 10 percent or less headroom. Not published on non-PoE switches.

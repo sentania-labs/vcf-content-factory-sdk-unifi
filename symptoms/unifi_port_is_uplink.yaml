@@ -1,0 +1,15 @@
+name: "[VCF Content Factory] UniFi Switch Port Is Uplink"
+adapter_kind: unifi_controller
+resource_kind: UniFiSwitchPort
+severity: INFO
+wait_cycles: 3
+cancel_cycles: 3
+
+condition:
+  type: property
+  key: Status|is_uplink
+  operator: EQ
+  value: "true"
+
+description: >
+  Informational scoping condition: the port is an uplink (Status|is_uplink is true). Used to restrict the link-down alert to uplink ports.

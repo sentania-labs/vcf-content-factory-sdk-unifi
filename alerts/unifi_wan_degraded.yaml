@@ -1,0 +1,28 @@
+name: "[VCF Content Factory] UniFi WAN Degraded"
+description: >
+  Fires when a UniFi WAN interface whose link is up shows low availability or high latency. A WAN with its link down raises no alert.
+adapter_kind: unifi_controller
+resource_kind: UniFiWanInterface
+type: 19
+sub_type: 19
+wait_cycles: 1
+cancel_cycles: 1
+criticality: WARNING
+impact:
+  badge: HEALTH
+symptom_sets:
+  operator: ANY
+  sets:
+    - defined_on: SELF
+      operator: ALL
+      symptoms:
+        - name: "[VCF Content Factory] UniFi WAN Link Up"
+        - name: "[VCF Content Factory] UniFi WAN Availability Low"
+    - defined_on: SELF
+      operator: ALL
+      symptoms:
+        - name: "[VCF Content Factory] UniFi WAN Link Up"
+        - name: "[VCF Content Factory] UniFi WAN Latency High"
+recommendations:
+  - name: "[VCF Content Factory] UniFi Investigate WAN Degradation"
+    priority: 1

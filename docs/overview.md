@@ -66,6 +66,42 @@ Build 15 changes to the metric set:
   is now the numeric `Configuration|recording_retention_days`. The old
   keys stop updating and keep their last value.
 
+Build 16 adds to the metric set:
+
+- **New `PoE|poe_budget_used_pct`** (%) on the switch: PoE Consumption
+  divided by PoE Budget Max, times 100, the share of the switch's PoE
+  budget drawn (for a "PoE budget nearly exhausted" alert, fork issue #30).
+  Published only when the switch reports a PoE Budget Max above 0 and at
+  least one PoE port reports its draw, so a non-PoE switch publishes
+  nothing (never 0 and never NaN). A draw above the budget reads above 100.
+
+Build 17 adds two properties and stops five from reading a missing field
+as a value (review of build 16):
+
+- **New `Status|up`** on the WAN interface: `true` / `false`, the WAN's
+  link state, so WAN Degraded leaves out an unused second WAN.
+- **New `Configuration|recording_mode`** on the camera: Protect's
+  recording mode (`always`, `detections`, `schedule`, `never`), so Camera
+  Not Recording leaves out a camera set never to record.
+- Switch port `Status|up`, `Status|is_uplink` and `Status|duplex`, and
+  camera `Status|is_connected` and `Status|is_recording`, are published
+  only when the controller sends their field; before, a missing field read
+  `false` (or `Half`), which the alerts would act on.
+
+### Alerts
+
+Build 16 (issue #30) bundles eight alerts, fourteen symptoms (twelve before build 17) and six
+recommendations, installed with the pak: gateway, switch and access point
+offline (`Status|state_code` disconnected or heartbeat missed, so a
+firmware upgrade does not fire), uplink port down, camera offline, camera
+not recording (connected cameras not set never to record), PoE budget nearly exhausted
+(`PoE|poe_budget_used_pct` >= 90 on a connected switch) and WAN degraded
+(availability below 99 or latency above 100 ms, on a WAN whose link is
+up). What they do not catch (a WAN that loses its link, a switch that
+loses its only uplink, inform-error devices, stale holds) is listed in
+`REFERENCE.md`, Alerts, Limits. The full table (object,
+severity, badge, conditions) is in `REFERENCE.md`, Alerts.
+
 ## Cross-Adapter Behavior
 
 The pack ships an **optional, informational vmnic→port stitch to ESXi

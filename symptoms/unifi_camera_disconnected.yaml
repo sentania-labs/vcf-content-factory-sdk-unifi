@@ -1,0 +1,15 @@
+name: "[VCF Content Factory] UniFi Camera Disconnected"
+adapter_kind: unifi_controller
+resource_kind: UniFiCamera
+severity: CRITICAL
+wait_cycles: 3
+cancel_cycles: 3
+
+condition:
+  type: property
+  key: Status|is_connected
+  operator: EQ
+  value: "false"
+
+description: >
+  Triggers when the Protect NVR reports the camera as not connected (Status|is_connected is false).

@@ -1,0 +1,15 @@
+name: "[VCF Content Factory] UniFi Switch Connected"
+adapter_kind: unifi_controller
+resource_kind: UniFiSwitch
+severity: INFO
+wait_cycles: 3
+cancel_cycles: 3
+
+condition:
+  type: metric_static
+  key: Status|state
+  operator: EQ
+  value: 1
+
+description: >
+  Informational scoping condition: the switch is connected (Status|state is 1). Keeps the PoE alert from holding on stale data from a disconnected switch.

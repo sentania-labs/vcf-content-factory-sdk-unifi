@@ -1,5 +1,5 @@
 adapter_kind: unifi_controller
-build_number: 15
+build_number: 17
 description: 'Monitors UniFi infrastructure via the classic Network API and Protect
   API. Discovers sites, gateways, switches, access points, NVR, and cameras. Per-switch-port
   and per-AP-radio child objects with PoE tracking. vCenter vmnic->port stitching to ESXi hosts.
@@ -9,5 +9,39 @@ description: 'Monitors UniFi infrastructure via the classic Network API and Prot
 entry_class: com.vcfcf.adapters.unifi.UniFiAdapter
 name: VCF Content Factory UniFi Controller
 released: true
+# Build 16 (issue #30): symptoms, alerts and recommendations ship in the pak.
+content_naming: factory_prefixed
+bundled_content:
+  symptoms:
+    - symptoms/unifi_ap_offline.yaml
+    - symptoms/unifi_camera_connected.yaml
+    - symptoms/unifi_camera_disconnected.yaml
+    - symptoms/unifi_camera_not_recording.yaml
+    - symptoms/unifi_camera_recording_enabled.yaml
+    - symptoms/unifi_gateway_offline.yaml
+    - symptoms/unifi_poe_budget_high.yaml
+    - symptoms/unifi_port_is_uplink.yaml
+    - symptoms/unifi_port_link_down.yaml
+    - symptoms/unifi_switch_connected.yaml
+    - symptoms/unifi_switch_offline.yaml
+    - symptoms/unifi_wan_availability_low.yaml
+    - symptoms/unifi_wan_latency_high.yaml
+    - symptoms/unifi_wan_link_up.yaml
+  alerts:
+    - alerts/unifi_ap_offline.yaml
+    - alerts/unifi_camera_not_recording.yaml
+    - alerts/unifi_camera_offline.yaml
+    - alerts/unifi_gateway_offline.yaml
+    - alerts/unifi_poe_budget_nearly_exhausted.yaml
+    - alerts/unifi_switch_offline.yaml
+    - alerts/unifi_uplink_port_down.yaml
+    - alerts/unifi_wan_degraded.yaml
+  recommendations:
+    - recommendations/unifi_investigate_camera_not_recording.yaml
+    - recommendations/unifi_investigate_disconnected_camera.yaml
+    - recommendations/unifi_investigate_offline_network_device.yaml
+    - recommendations/unifi_investigate_uplink_port_down.yaml
+    - recommendations/unifi_investigate_wan_degradation.yaml
+    - recommendations/unifi_reduce_poe_load.yaml
 tier: 2
 version: 1.1.0

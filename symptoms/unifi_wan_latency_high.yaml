@@ -1,0 +1,15 @@
+name: "[VCF Content Factory] UniFi WAN Latency High"
+adapter_kind: unifi_controller
+resource_kind: UniFiWanInterface
+severity: WARNING
+wait_cycles: 3
+cancel_cycles: 3
+
+condition:
+  type: metric_static
+  key: Health|latency
+  operator: GT
+  value: 100
+
+description: >
+  Triggers when WAN interface latency (Health|latency, ms) is above 100.

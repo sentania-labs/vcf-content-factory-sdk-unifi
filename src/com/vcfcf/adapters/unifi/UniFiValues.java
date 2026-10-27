@@ -125,6 +125,53 @@ final class UniFiValues {
 	}
 
 	/**
+	 * Build 16 (issue #30): {@code PoE|poe_budget_used_pct}, the share of
+	 * the switch's PoE budget drawn, as a percentage: consumption divided
+	 * by {@code total_max_power}, times 100. {@code null} (nothing
+	 * published) when the maximum is absent or not above 0 (a non-PoE
+	 * switch reports none, or 0) or when no PoE port reported its draw:
+	 * never 0 and never NaN for a switch that has no budget to use. A draw
+	 * above the budget reads above 100, as reported.
+	 */
+	static Double poeBudgetUsedPct(Double consumption, Double maxPower) {
+		if (consumption == null || maxPower == null || !(maxPower > 0)) return null;
+		double pct = consumption / maxPower * 100.0;
+		return Double.isFinite(pct) ? pct : null;
+	}
+
+	/**
+	 * Build 17 (review B1/W2 on build 16): a boolean field as the property
+	 * text {@code "true"} or {@code "false"}, or {@code null} (nothing
+	 * published) when the field is absent or not a boolean. Before build 17
+	 * the adapter used {@code SimpleJson.asBoolean()}, which reads an absent
+	 * field as false, so a field the controller did not send published
+	 * "false" and could raise Uplink Port Down, Camera Offline or Camera Not
+	 * Recording. Accepts a JSON boolean, the strings true/false in any case,
+	 * and a number (0 false, any other true), the shapes asBoolean accepted.
+	 */
+	static String flag(String raw) {
+		if (raw == null) return null;
+		String t = raw.trim();
+		if ("true".equalsIgnoreCase(t)) return "true";
+		if ("false".equalsIgnoreCase(t)) return "false";
+		Double d = number(t);
+		if (d == null) return null;
+		return d != 0.0 ? "true" : "false";
+	}
+
+	/**
+	 * Build 17 (review W1 on build 16): a Protect camera's recording mode
+	 * ({@code recordingSettings.mode}) as sent, trimmed, or {@code null}
+	 * when absent or blank. Not normalized or validated against a list, so
+	 * a mode a newer Protect adds still publishes.
+	 */
+	static String text(String raw) {
+		if (raw == null) return null;
+		String t = raw.trim();
+		return t.isEmpty() ? null : t;
+	}
+
+	/**
 	 * Build 15 (issue #16): seconds from an epoch-millisecond timestamp
 	 * (Protect's {@code lastMotion}) to {@code nowMs}, or {@code null} when
 	 * the timestamp is absent or not positive (never had motion). A

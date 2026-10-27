@@ -134,6 +134,11 @@
 				                   isProperty="false" defaultMonitored="false" unit="Mbps"/>
 			</ResourceGroup>
 
+			<!-- Build 17 (review B1 on build 16): link state, "true"/"false", only when sent. -->
+			<ResourceGroup key="Status" nameKey="268" instanced="false">
+				<ResourceAttribute key="up" nameKey="269" dataType="string" isProperty="true"/>
+			</ResourceGroup>
+
 			<ResourceGroup key="Configuration" nameKey="69" instanced="false">
 				<ResourceAttribute key="type" nameKey="70" dataType="string" isProperty="true"/>
 				<ResourceAttribute key="ip" nameKey="71" dataType="string" isProperty="true"/>
@@ -177,6 +182,9 @@
 				                   isProperty="false" defaultMonitored="true" unit="W"/>
 				<ResourceAttribute key="poe_budget_remaining" nameKey="91" dataType="float"
 				                   isProperty="false" defaultMonitored="true" unit="W"/>
+				<!-- Build 16 (issue #30): consumption / total_max_power * 100. -->
+				<ResourceAttribute key="poe_budget_used_pct" nameKey="267" dataType="float"
+				                   isProperty="false" defaultMonitored="true" unit="%"/>
 			</ResourceGroup>
 
 			<ResourceGroup key="Configuration" nameKey="92" instanced="false">
@@ -415,6 +423,11 @@
 			<ResourceGroup key="Network" nameKey="264" instanced="false">
 				<ResourceAttribute key="ip" nameKey="265" dataType="string" isProperty="true"/>
 				<ResourceAttribute key="mac_address" nameKey="266" dataType="string" isProperty="true"/>
+			</ResourceGroup>
+
+			<!-- Build 17 (review W1 on build 16): Protect recordingSettings.mode, only when sent. -->
+			<ResourceGroup key="Configuration" nameKey="270" instanced="false">
+				<ResourceAttribute key="recording_mode" nameKey="271" dataType="string" isProperty="true"/>
 			</ResourceGroup>
 		</ResourceKind>
 

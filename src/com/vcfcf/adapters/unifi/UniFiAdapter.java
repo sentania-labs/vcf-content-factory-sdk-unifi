@@ -874,6 +874,25 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 				System.currentTimeMillis(), value != null ? value : ""));
 	}
 
+	/**
+	 * Build 17 (review W2 on build 16): a boolean property, "true" or
+	 * "false", published only when the controller sent the field
+	 * (UniFiValues.flag). An absent field publishes nothing, never "false",
+	 * because "false" on these keys drives the bundled alerts.
+	 */
+	private static void flagPropIfPresent(List<MetricData> out, String key,
+			SimpleJson field) {
+		String value = UniFiValues.flag(field.asString());
+		if (value != null) prop(out, key, value);
+	}
+
+	/** Build 17: a text property published only when present and not blank. */
+	private static void textPropIfPresent(List<MetricData> out, String key,
+			SimpleJson field) {
+		String value = UniFiValues.text(field.asString());
+		if (value != null) prop(out, key, value);
+	}
+
 	// -----------------------------------------------------------------------
 	// Per-kind collectors (value semantics preserved from v1)
 	// -----------------------------------------------------------------------
@@ -985,6 +1004,13 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 			metricIfPresent(out, "Health|speed", wan.get("speed"));
 		}
 
+		// Build 17 (review B1 on build 16): the WAN's link state, so WAN
+		// Degraded can be scoped to a WAN that is up (an unused second WAN
+		// reads up false with availability 0). Only when the controller
+		// sends it; published regardless of the gateway's state, like the
+		// switch port's Status|up.
+		flagPropIfPresent(out, "Status|up", wan.get("up"));
+
 		prop(out, "Configuration|type", wan.get("type").asString(""));
 		prop(out, "Configuration|ip", wan.get("ip").asString(""));
 		prop(out, "Configuration|netmask", wan.get("netmask").asString(""));
@@ -1057,6 +1083,10 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 			if (maxPower != null) {
 				metric(out, "PoE|poe_budget_remaining", maxPower - poeConsumption);
 			}
+			// Build 16 (issue #30): share of the budget drawn, for the "PoE
+			// budget nearly exhausted" alert. Only with a maximum above 0.
+			metricIfPresent(out, "PoE|poe_budget_used_pct",
+					UniFiValues.poeBudgetUsedPct(poeConsumption, maxPower));
 		}
 	}
 
@@ -1106,13 +1136,16 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 						port.get("mac_table_count"));
 			}
 		}
-		prop(out, "Status|up", port.get("up").asBoolean() ? "true" : "false");
+		// Build 17 (review W2 on build 16): up and is_uplink only when sent.
+		flagPropIfPresent(out, "Status|up", port.get("up"));
 		// Review N1: blank when absent, never "0" (a down port reads 0).
 		prop(out, "Status|speed", port.get("speed").asString(""));
-		prop(out, "Status|duplex",
-				port.get("full_duplex").asBoolean() ? "Full" : "Half");
-		prop(out, "Status|is_uplink",
-				port.get("is_uplink").asBoolean() ? "true" : "false");
+		// Build 17: Full/Half only when full_duplex is sent (was Half when absent).
+		String fullDuplex = UniFiValues.flag(port.get("full_duplex").asString());
+		if (fullDuplex != null) {
+			prop(out, "Status|duplex", "true".equals(fullDuplex) ? "Full" : "Half");
+		}
+		flagPropIfPresent(out, "Status|is_uplink", port.get("is_uplink"));
 		prop(out, "Status|media", port.get("media").asString(""));
 		prop(out, "Status|stp_state", port.get("stp_state").asString(""));
 		prop(out, "Status|port_name", port.get("name").asString(""));
@@ -1342,10 +1375,15 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 						System.currentTimeMillis()));
 
 		prop(out, "Status|state", cam.get("state").asString(""));
-		prop(out, "Status|is_connected",
-				cam.get("isConnected").asBoolean() ? "true" : "false");
-		prop(out, "Status|is_recording",
-				cam.get("isRecording").asBoolean() ? "true" : "false");
+		// Build 17 (review W2 on build 16): only when Protect sends them.
+		flagPropIfPresent(out, "Status|is_connected", cam.get("isConnected"));
+		flagPropIfPresent(out, "Status|is_recording", cam.get("isRecording"));
+		// Build 17 (review W1 on build 16): the camera's recording mode
+		// (recordingSettings.mode: always, detections, schedule, never, as
+		// Protect sends it), so Camera Not Recording can leave out a camera
+		// set never to record. Only when present.
+		textPropIfPresent(out, "Configuration|recording_mode",
+				cam.get("recordingSettings").get("mode"));
 
 		prop(out, "Hardware|model", cam.get("modelKey").asString(""));
 		prop(out, "Hardware|firmware", cam.get("firmwareVersion").asString(""));

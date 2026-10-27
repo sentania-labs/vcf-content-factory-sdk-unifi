@@ -1,0 +1,15 @@
+name: "[VCF Content Factory] UniFi Switch Port Link Down"
+adapter_kind: unifi_controller
+resource_kind: UniFiSwitchPort
+severity: CRITICAL
+wait_cycles: 3
+cancel_cycles: 3
+
+condition:
+  type: property
+  key: Status|up
+  operator: EQ
+  value: "false"
+
+description: >
+  Triggers when a switch port link is down (Status|up is false).

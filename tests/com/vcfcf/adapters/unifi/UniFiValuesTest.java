@@ -13,6 +13,9 @@ public final class UniFiValuesTest {
 		deviceState();
 		secondsSinceLastMotion();
 		retentionDays();
+		poeBudgetUsedPct();
+		flagAbsentIsNotFalse();
+		recordingModeText();
 		System.out.println("UniFiValuesTest: all assertions passed");
 	}
 
@@ -123,5 +126,57 @@ public final class UniFiValuesTest {
 		T.eq(0.0, UniFiValues.millisToDays(0.0), "0 is a real value");
 		T.eq(null, UniFiValues.millisToDays(null), "absent");
 		T.eq(null, UniFiValues.millisToDays(-1.0), "negative");
+	}
+
+	/** #30: share of the PoE budget drawn; nothing for a switch with no budget. */
+	static void poeBudgetUsedPct() {
+		T.eq(50.0, UniFiValues.poeBudgetUsedPct(30.0, 60.0), "half the budget");
+		T.eq(87.5, UniFiValues.poeBudgetUsedPct(105.0, 120.0), "87.5 %");
+		T.eq(0.0, UniFiValues.poeBudgetUsedPct(0.0, 60.0),
+				"a PoE switch drawing nothing reads a real 0");
+		T.eq(100.0, UniFiValues.poeBudgetUsedPct(60.0, 60.0), "fully used");
+		T.eq(150.0, UniFiValues.poeBudgetUsedPct(90.0, 60.0),
+				"over budget reads above 100, as reported");
+		T.eq(null, UniFiValues.poeBudgetUsedPct(10.0, null),
+				"no total_max_power (non-PoE switch): not published");
+		T.eq(null, UniFiValues.poeBudgetUsedPct(0.0, 0.0),
+				"total_max_power 0: not published, never NaN");
+		T.eq(null, UniFiValues.poeBudgetUsedPct(10.0, 0.0),
+				"total_max_power 0: not published, never Infinity");
+		T.eq(null, UniFiValues.poeBudgetUsedPct(10.0, -5.0),
+				"negative total_max_power: not published");
+		T.eq(null, UniFiValues.poeBudgetUsedPct(null, 60.0),
+				"no port reported its draw: not published");
+		T.eq(null, UniFiValues.poeBudgetUsedPct(null, null), "neither");
+		T.eq(null, UniFiValues.poeBudgetUsedPct(10.0, Double.NaN), "NaN max");
+		T.eq(null, UniFiValues.poeBudgetUsedPct(1e308, 1e-308),
+				"overflow is not published");
+	}
+
+	/** Build 17 (review W2): an absent boolean publishes nothing, never "false". */
+	static void flagAbsentIsNotFalse() {
+		T.eq(null, UniFiValues.flag(null), "absent field: nothing published");
+		T.eq(null, UniFiValues.flag(""), "empty string");
+		T.eq(null, UniFiValues.flag("  "), "blank string");
+		T.eq(null, UniFiValues.flag("yes"), "free text is unreadable, not false");
+		T.eq(null, UniFiValues.flag("{up=true}"), "object");
+		T.eq(null, UniFiValues.flag("NaN"), "NaN");
+		T.eq("true", UniFiValues.flag("true"), "JSON true");
+		T.eq("false", UniFiValues.flag("false"), "JSON false is a real false");
+		T.eq("true", UniFiValues.flag("TRUE"), "string, any case");
+		T.eq("false", UniFiValues.flag(" False "), "padded string");
+		T.eq("true", UniFiValues.flag("1"), "number 1");
+		T.eq("false", UniFiValues.flag("0"), "number 0");
+		T.eq("true", UniFiValues.flag("2"), "non-zero number, as asBoolean read it");
+	}
+
+	/** Build 17 (review W1): recording mode as sent; absent or blank, nothing. */
+	static void recordingModeText() {
+		T.eq("never", UniFiValues.text("never"), "never");
+		T.eq("always", UniFiValues.text(" always "), "trimmed");
+		T.eq("detections", UniFiValues.text("detections"), "kept as sent");
+		T.eq(null, UniFiValues.text(null), "absent");
+		T.eq(null, UniFiValues.text(""), "empty");
+		T.eq(null, UniFiValues.text("   "), "blank");
 	}
 }

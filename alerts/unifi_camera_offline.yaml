@@ -1,0 +1,22 @@
+name: "[VCF Content Factory] UniFi Camera Offline"
+description: >
+  Fires when a UniFi Protect camera is disconnected from the controller.
+adapter_kind: unifi_controller
+resource_kind: UniFiCamera
+type: 17
+sub_type: 18
+wait_cycles: 1
+cancel_cycles: 1
+criticality: CRITICAL
+impact:
+  badge: HEALTH
+symptom_sets:
+  operator: ALL
+  sets:
+    - defined_on: SELF
+      operator: ALL
+      symptoms:
+        - name: "[VCF Content Factory] UniFi Camera Disconnected"
+recommendations:
+  - name: "[VCF Content Factory] UniFi Investigate Disconnected Camera"
+    priority: 1

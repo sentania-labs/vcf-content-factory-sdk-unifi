@@ -1,0 +1,15 @@
+name: "[VCF Content Factory] UniFi Gateway Offline"
+adapter_kind: unifi_controller
+resource_kind: UniFiGateway
+severity: CRITICAL
+wait_cycles: 3
+cancel_cycles: 3
+
+condition:
+  type: property
+  key: Status|state_code
+  operator: REGEX
+  value: "^(disconnected|heartbeat missed)$"
+
+description: >
+  Triggers when the Gateway state is disconnected or heartbeat missed (Status|state_code). Upgrading, provisioning and adopting are deliberately not matched, so a firmware upgrade does not alert.

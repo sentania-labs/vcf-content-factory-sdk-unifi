@@ -1,0 +1,15 @@
+name: "[VCF Content Factory] UniFi WAN Availability Low"
+adapter_kind: unifi_controller
+resource_kind: UniFiWanInterface
+severity: WARNING
+wait_cycles: 3
+cancel_cycles: 3
+
+condition:
+  type: metric_static
+  key: Health|availability
+  operator: LT
+  value: 99
+
+description: >
+  Triggers when WAN interface availability (Health|availability, percent) is below 99.

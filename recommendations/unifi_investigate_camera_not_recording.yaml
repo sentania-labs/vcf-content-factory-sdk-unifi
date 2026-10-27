@@ -1,0 +1,8 @@
+name: "[VCF Content Factory] UniFi Investigate Camera Not Recording"
+description: |
+  The camera is connected but is not recording.
+
+  Check the recording mode and schedule for the camera in UniFi Protect and confirm recording is enabled. Check that the storage drive is present, healthy and not full.
+
+  If storage is healthy, restart the camera or the Protect service and verify that recording resumes.
+adapter_kind: unifi_controller

@@ -1,0 +1,8 @@
+name: "[VCF Content Factory] UniFi Investigate Disconnected Camera"
+description: |
+  The camera is disconnected from the UniFi Protect controller.
+
+  Check that the camera has power and that the switch port feeding it is up and delivering PoE. Check the cable and the uplink path between the camera and the controller.
+
+  If the network path is healthy, restart the camera from the UniFi Protect console or re-adopt it.
+adapter_kind: unifi_controller

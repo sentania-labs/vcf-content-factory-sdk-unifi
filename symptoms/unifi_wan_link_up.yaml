@@ -1,0 +1,15 @@
+name: "[VCF Content Factory] UniFi WAN Link Up"
+adapter_kind: unifi_controller
+resource_kind: UniFiWanInterface
+severity: INFO
+wait_cycles: 3
+cancel_cycles: 3
+
+condition:
+  type: property
+  key: Status|up
+  operator: EQ
+  value: "true"
+
+description: >
+  Informational scoping condition: the WAN interface link is up (Status|up is true). Used so the WAN degraded alert does not fire on an unplugged or unused WAN.

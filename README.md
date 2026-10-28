@@ -85,11 +85,21 @@ of the retention window. This cannot be undone. On devel that includes:
 
 Removal follows what the controller lists, so a configuration or
 permission change counts too: narrowing the account's site access removes
-those sites and their devices, and a radio the controller stops reporting
-is removed. An object that comes back returns as a new object with no
-history. An empty answer is never taken as proof that everything is gone
-(an empty site, camera, port or radio list counts nothing), so the last
-object of a kind is never removed automatically; delete it by hand.
+those sites and their devices (the pack logs a WARN naming a site the
+first cycle it is missing), and a radio the controller stops reporting is
+removed. An object that comes back returns as a new object with no history.
+
+Only these empty answers count nothing, so the objects they cover are
+never removed automatically and the last one goes by hand: an empty site
+list (no kind at all); no device on any site (no gateway, switch, access
+point, WAN, port or radio); an empty camera list while the NVR is listed;
+an empty or missing port table on a listed switch, radio table on a listed
+access point, or `wan1` on a listed gateway. Everything else is removed
+when it stops being listed, the last of its type included: remove the only
+switch while a gateway or access point is still listed and that switch and
+its ports are removed; remove a gateway and its WANs go with it; a site
+whose devices are all gone loses them while another site still lists
+devices. While a kind's removal is off, the pack logs why once at INFO.
 
 Before upgrading, list the pack's objects (Inventory, filter by adapter
 type UniFi Controller) and export anything whose history you want to keep.

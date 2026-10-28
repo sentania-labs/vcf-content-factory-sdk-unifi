@@ -52,8 +52,10 @@ def enumeration():
     assert tail.endswith(
         "lastRead = new ReadRecord(Thread.currentThread(), read.kinds());"), tail[-120:]
     assert enum.index("read.sitesRead(") > enum.index("currentSnapshot()")
-    # Review R2-B1: the site count goes in, so an empty list declares nothing.
-    assert 'read.sitesRead(s.sites.get("data").asList().size());' in enum
+    # Review R2-B1: the site count goes in, so an empty list declares nothing;
+    # review R3-N1: and the site list's own meta.rc.
+    assert ('read.sitesRead(s.sites.get("data").asList().size(),\n\t\t\t\t'
+            'ReadKinds.rcOk(s.sites.get("meta").get("rc").asString("")));') in enum
     # Every site's stat/device, failed sites included (cool-downs are in
     # failedSites), before its devices are walked.
     site = enum.index("read.site(s.failedSites.containsKey(siteName),")
@@ -61,11 +63,20 @@ def enumeration():
     assert "s.devicesBySite.containsKey(siteName) && siteDevices.isList()" in enum
     # Review R2-W1(a): meta.rc must be ok for the site to count as read.
     assert 'ReadKinds.rcOk(sitePayload.get("meta").get("rc").asString(""))' in enum
+    # Review R3-B1: every record in the site's data counts (before any skip),
+    # so zero devices on every site declares no device kind.
+    assert ('ReadKinds.rcOk(sitePayload.get("meta").get("rc").asString("")),\n'
+            '\t\t\t\t\tsiteDevices.isList() ? siteDevices.asList().size() : 0);') in enum
+    assert enum.count("read.site(") == 1
     assert "read.deviceWithoutIdentity();" in enum
     # Review R2-N2: a record with no type is unknown, as a MAC-less one.
     assert "if (type.trim().isEmpty()) read.deviceWithoutIdentity();" in enum
     assert enum.index("if (type.trim().isEmpty())") < enum.index("String mac = deviceMac(dev);")
-    assert 'read.gateway(ReadKinds.informing(dev.get("state").asString()));' in enum
+    # Review R3-W1: a gateway record with no wan1 is incomplete for WAN.
+    assert ('read.gateway(ReadKinds.informing(dev.get("state").asString()),\n'
+            '\t\t\t\t\t\t\t!dev.get("wan1").isNull());') in enum
+    assert '!dev.get("wan2")' not in enum.split("read.gateway(")[1].split(";")[0], \
+        "wan2 must not gate the WAN kind"
     # Review R2-W1(c, d): the row count goes in, so an empty table is incomplete.
     assert "portTable.isList() ? portTable.asList().size() : 0,\n\t\t\t\t\t\t\tportsNoIndex);" in enum
     assert "radioStats.isList() ? radioStats.asList().size() : 0,\n\t\t\t\t\t\t\tradiosNoCode);" in enum
@@ -77,6 +88,24 @@ def enumeration():
     # Skipped records are counted, not silently dropped.
     assert "portsNoIndex++;" in enum and "radiosNoCode++;" in enum
     assert "camerasNoMac++;" in enum
+
+
+def gap_logging():
+    enum = method_body("void", "enumerateResources")
+    # Review R3-N2, R3-N3: the gaps are logged before the record is made,
+    # from the same ReadKinds, every enumeration.
+    assert enum.index("logVanishedReadGaps(read, listedSites);") < enum.index(
+        "lastRead = new ReadRecord(")
+    assert "listedSites.put(siteName, siteDesc);" in enum
+    body = method_body("void", "logVanishedReadGaps")
+    assert "read.leftOut().entrySet()" in body
+    assert 'streakLog.fail("not-read|" + e.getKey())' in body
+    assert "logInfo(" in body
+    # The site watch is fed only a fully read list (no warn, no forget on
+    # an empty or rc-failed one), and warns.
+    assert body.index("!read.siteListRead()") < body.index("c.siteWatch.update(listedSites)")
+    assert "logWarn(" in body
+    assert "final SiteListWatch siteWatch = new SiteListWatch();" in SRC
 
 
 def relationships():
@@ -122,6 +151,7 @@ def stitch():
 def main():
     hooks()
     enumeration()
+    gap_logging()
     relationships()
     stitch()
     print("test_vanished_wiring: all assertions passed")

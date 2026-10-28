@@ -1,7 +1,9 @@
 package com.vcfcf.adapters.unifi;
 
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -21,7 +23,8 @@ import java.util.Set;
  * <ul>
  *   <li>{@code UniFiSite} and {@code UniFiWirelessAggregate} (one per site):
  *       whenever {@code /self/sites} was read as a list with at least one
- *       site (the snapshot build throws without a list). A site removed from
+ *       site and {@code meta.rc} {@code ok} (the snapshot build throws
+ *       without a list; review R3-N1). A site removed from
  *       the controller and its Wireless Summary are marked together. An
  *       empty site list is not proof that everything is gone (a controller
  *       always carries its default site; a Network app mid-restore, an
@@ -32,15 +35,22 @@ import java.util.Set;
  *       cooling-down site, every payload a device list with
  *       {@code meta.rc} {@code ok}) and no gateway, switch or access point
  *       record lacked its MAC, and no device record lacked its
- *       {@code type} (it could have been any of the three). The hook is per kind,
+ *       {@code type} (it could have been any of the three), and at least
+ *       one device record came back across all sites. The hook is per kind,
  *       not per site, and a device can move between sites, so one unread
- *       site leaves every device kind out.</li>
+ *       site leaves every device kind out. Zero device records on every
+ *       site is not an inventory (a UniFi OS console lists itself; a
+ *       Network app mid-start or a proxy stub answers {@code ok} with
+ *       {@code []}), so it declares none of the six device kinds and the
+ *       last device on the controller is removed by hand (review R3-B1).</li>
  *   <li>{@code UniFiWanInterface}, {@code UniFiSwitchPort},
  *       {@code UniFiRadio}: as their device kinds, and also only when every
  *       registered device of that type is informing the controller (state
  *       1, 4, 5 or 7) and sent its table ({@code port_table},
  *       {@code radio_table_stats}) as a non-empty list with an identity on
- *       every row. A disconnected switch may come back with an empty or
+ *       every row; for WAN, every registered gateway carries {@code wan1}
+ *       (review R3-W1; an absent {@code wan2} is a real configuration and
+ *       is not a gap). A disconnected switch may come back with an empty or
  *       missing port table; its ports are not gone. Every switch has ports
  *       and every access point a radio, so an empty table is incomplete in
  *       any state (review R2-W1).</li>
@@ -55,6 +65,10 @@ import java.util.Set;
  * delivered). A device pending adoption is not registered by discovery
  * (Codex P2, build 15), so an object an earlier build registered for it is
  * counted like any other device that is no longer listed.
+ *
+ * <p>{@link #leftOut()} says why each left-out kind was left out, so the
+ * adapter can log it once per streak (review R3-N2): removal that is off
+ * for a kind is never off silently.
  */
 final class ReadKinds {
 
@@ -76,7 +90,10 @@ final class ReadKinds {
 					Collections.singletonList(WORLD)));
 
 	private boolean sitesRead;
+	private boolean siteListEmpty;
+	private boolean siteListRcNotOk;
 	private boolean everySiteRead = true;
+	private int deviceRecords;
 	private boolean deviceWithoutIdentity;
 	private boolean wansIncomplete;
 	private boolean portsIncomplete;
@@ -89,9 +106,18 @@ final class ReadKinds {
 	 * {@code /self/sites} was read as a site list.
 	 *
 	 * @param siteCount the sites in it; 0 declares nothing (R2-B1)
+	 * @param rcOk      its {@code meta.rc} is {@code ok}; otherwise nothing
+	 *                  is declared (R3-N1)
 	 */
-	void sitesRead(int siteCount) {
-		sitesRead = siteCount > 0;
+	void sitesRead(int siteCount, boolean rcOk) {
+		siteListEmpty = siteCount <= 0;
+		siteListRcNotOk = !rcOk;
+		sitesRead = !siteListEmpty && rcOk;
+	}
+
+	/** The site list was read in full: at least one site, meta.rc ok. */
+	boolean siteListRead() {
+		return sitesRead;
 	}
 
 	/**
@@ -101,9 +127,14 @@ final class ReadKinds {
 	 * @param deviceList its payload's {@code data} is a list
 	 * @param rcOk       its payload's {@code meta.rc} is {@code ok}
 	 *                   ({@link #rcOk(String)})
+	 * @param deviceRows records in its {@code data}, any type, registered or
+	 *                   not; summed over the sites, 0 declares no device
+	 *                   kind (R3-B1)
 	 */
-	void site(boolean failed, boolean deviceList, boolean rcOk) {
+	void site(boolean failed, boolean deviceList, boolean rcOk,
+			int deviceRows) {
 		if (failed || !deviceList || !rcOk) everySiteRead = false;
+		if (deviceRows > 0) deviceRecords += deviceRows;
 	}
 
 	/**
@@ -128,9 +159,11 @@ final class ReadKinds {
 	 * A registered gateway.
 	 *
 	 * @param informing its state is a known informing code
+	 * @param hasWan1   its record carries {@code wan1}; every gateway has a
+	 *                  WAN 1, so its absence is incomplete (R3-W1)
 	 */
-	void gateway(boolean informing) {
-		if (!informing) wansIncomplete = true;
+	void gateway(boolean informing, boolean hasWan1) {
+		if (!informing || !hasWan1) wansIncomplete = true;
 	}
 
 	/**
@@ -182,22 +215,84 @@ final class ReadKinds {
 	/** The kinds read in full, for {@code kindsReadThisCycle()}. */
 	Set<String> kinds() {
 		Set<String> out = new LinkedHashSet<>();
-		if (!sitesRead) return Collections.unmodifiableSet(out);
+		evaluate(out, new LinkedHashMap<>());
+		return Collections.unmodifiableSet(out);
+	}
+
+	/**
+	 * Why kinds were left out this cycle (review R3-N2): a stable key per
+	 * reason (for a once-per-streak log) to a sentence naming the kinds and
+	 * the cause. Empty when every kind was read. The same evaluation as
+	 * {@link #kinds()}, so the two cannot disagree.
+	 */
+	Map<String, String> leftOut() {
+		Map<String, String> why = new LinkedHashMap<>();
+		evaluate(new LinkedHashSet<>(), why);
+		return Collections.unmodifiableMap(why);
+	}
+
+	private static final String DEVICE_KINDS =
+			"gateway, switch, access point, WAN, port and radio";
+
+	private void evaluate(Set<String> out, Map<String, String> why) {
+		if (!sitesRead) {
+			why.put("sites", "every kind: the site list "
+					+ (siteListEmpty ? "was empty" : "meta.rc was not ok"));
+			return;
+		}
 		out.add(SITE);
 		out.add(AGGREGATE);
-		if (everySiteRead && !deviceWithoutIdentity) {
+		if (!everySiteRead) {
+			why.put("devices-site", DEVICE_KINDS + ": a site's stat/device "
+					+ "failed, is cooling down, was not a device list or its "
+					+ "meta.rc was not ok");
+		} else if (deviceWithoutIdentity) {
+			why.put("devices-identity", DEVICE_KINDS + ": a device record "
+					+ "had no type, or a gateway, switch or access point no MAC");
+		} else if (deviceRecords <= 0) {
+			why.put("devices-none", DEVICE_KINDS + ": no site listed any "
+					+ "device, which is not taken as proof that none exist");
+		} else {
 			out.add(GATEWAY);
 			out.add(SWITCH);
 			out.add(ACCESS_POINT);
-			if (!wansIncomplete) out.add(WAN);
-			if (!portsIncomplete) out.add(PORT);
-			if (!radiosIncomplete) out.add(RADIO);
+			if (wansIncomplete) {
+				why.put("wan", "WAN: a gateway was not informing or its "
+						+ "record had no wan1");
+			} else {
+				out.add(WAN);
+			}
+			if (portsIncomplete) {
+				why.put("port", "port: a switch was not informing or sent an "
+						+ "empty or missing port_table, or a port with no "
+						+ "port_idx");
+			} else {
+				out.add(PORT);
+			}
+			if (radiosIncomplete) {
+				why.put("radio", "radio: an access point was not informing or "
+						+ "sent an empty or missing radio_table_stats, or a "
+						+ "radio with no code");
+			} else {
+				out.add(RADIO);
+			}
 		}
-		if (protectRead) {
-			if (nvrRead) out.add(NVR);
-			if (camerasRead) out.add(CAMERA);
+		if (!protectRead) {
+			why.put("protect", "NVR and camera: no Protect bootstrap with an "
+					+ "NVR was read");
+			return;
 		}
-		return Collections.unmodifiableSet(out);
+		if (nvrRead) {
+			out.add(NVR);
+		} else {
+			why.put("nvr", "NVR: the NVR had no MAC");
+		}
+		if (camerasRead) {
+			out.add(CAMERA);
+		} else {
+			why.put("camera", "camera: the camera list was missing or empty, "
+					+ "or a camera had no MAC");
+		}
 	}
 
 	/** Whether a raw device {@code state} is a known informing code. */

@@ -248,6 +248,9 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		final RefreshCache<List<UniFiStitcher.ForeignHost>> vmnicHosts =
 				new RefreshCache<>(System::currentTimeMillis, SLOW_REFRESH_MS,
 						SLOW_MAX_STALE_MS);
+		// Build 18 review R3-N3: the last read site list, so a site that
+		// drops out is named once at WARN.
+		final SiteListWatch siteWatch = new SiteListWatch();
 
 		Configured(UniFiApiClient api, HttpClients clients, Logger apiLog,
 				Logger snapshotLog, Logger inventoryLog,
@@ -631,8 +634,11 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		out.accept(rcOf("UniFiWorld", "UniFi World", "world_id", "unifi_world"));
 		// Snapshot.build throws without a site list; an empty one declares
 		// nothing (review R2-B1: World is always delivered, so the
-		// framework's "delivered nothing" guard would not catch it).
-		read.sitesRead(s.sites.get("data").asList().size());
+		// framework's "delivered nothing" guard would not catch it), nor
+		// does one whose meta.rc is not ok (review R3-N1).
+		read.sitesRead(s.sites.get("data").asList().size(),
+				ReadKinds.rcOk(s.sites.get("meta").get("rc").asString("")));
+		Map<String, String> listedSites = new LinkedHashMap<>();
 
 		int sites = 0, gateways = 0, switches = 0, ports = 0, aps = 0,
 				radios = 0, wans = 0, aggregates = 0, cameras = 0, nvrs = 0;
@@ -642,12 +648,17 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 			String siteDesc = site.get("desc").asString(siteName);
 			out.accept(rcOf("UniFiSite", siteDesc, "site_name", siteName));
 			sites++;
+			if (siteName != null) listedSites.put(siteName, siteDesc);
 
 			SimpleJson sitePayload = s.devicesForSite(siteName);
 			SimpleJson siteDevices = sitePayload.get("data");
+			// Review R3-B1: every record counts toward "the controller
+			// listed a device", registered or not; zero on every site
+			// declares no device kind.
 			read.site(s.failedSites.containsKey(siteName),
 					s.devicesBySite.containsKey(siteName) && siteDevices.isList(),
-					ReadKinds.rcOk(sitePayload.get("meta").get("rc").asString("")));
+					ReadKinds.rcOk(sitePayload.get("meta").get("rc").asString("")),
+					siteDevices.isList() ? siteDevices.asList().size() : 0);
 			for (SimpleJson dev : siteDevices.asList()) {
 				String type = dev.get("type").asString("");
 				// Review R2-N2: a record with no type could have been a
@@ -672,7 +683,10 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 				if (isGateway(type)) {
 					out.accept(rcOf("UniFiGateway", name, "mac", mac));
 					gateways++;
-					read.gateway(ReadKinds.informing(dev.get("state").asString()));
+					// Review R3-W1: every gateway has a WAN 1; a record
+					// without one is incomplete (an absent wan2 is not).
+					read.gateway(ReadKinds.informing(dev.get("state").asString()),
+							!dev.get("wan1").isNull());
 					if (!dev.get("wan1").isNull()) {
 						out.accept(rcOf("UniFiWanInterface",
 								UniFiIds.childName("WAN 1", name),
@@ -778,7 +792,41 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 				+ " switches, " + ports + " ports, " + aps + " aps, "
 				+ radios + " radios, " + aggregates + " aggregates, "
 				+ nvrs + " nvr, " + cameras + " cameras");
+		logVanishedReadGaps(read, listedSites);
 		lastRead = new ReadRecord(Thread.currentThread(), read.kinds());
+	}
+
+	/**
+	 * Build 18 review R3-N2, R3-N3: says why a kind's removal is off
+	 * (INFO, once per streak per reason, so a persistent gap such as a
+	 * typeless record or a switch stuck with an empty port table is never
+	 * silent), and names a site that dropped out of a fully read site list
+	 * (WARN, once when it goes missing): its objects start counting toward
+	 * NOT_EXISTING.
+	 */
+	private void logVanishedReadGaps(ReadKinds read,
+			Map<String, String> listedSites) {
+		for (Map.Entry<String, String> e : read.leftOut().entrySet()) {
+			if (streakLog.fail("not-read|" + e.getKey())) {
+				logInfo("Removal of vanished objects is off for " + e.getValue()
+						+ ". Objects of the kinds named take no miss and are "
+						+ "not marked Not Existing; logged once until a cycle "
+						+ "without this reason.");
+			}
+		}
+		Configured c = this.configured;
+		if (c == null || !read.siteListRead()) return;
+		for (Map.Entry<String, String> gone : c.siteWatch.update(listedSites).entrySet()) {
+			logWarn("UniFi site '" + gone.getValue() + "' (" + gone.getKey()
+					+ ") is no longer in the controller's site list (deleted, "
+					+ "or the account's site access was narrowed). If it stays "
+					+ "out for 12 consecutive cycles, the site, its Wireless "
+					+ "Summary and every device, port, radio and WAN under it "
+					+ "are marked Not Existing, "
+					+ "and deleted with their history after the Deleted "
+					+ "Objects retention. Restore the site or the access "
+					+ "before then to keep them.");
+		}
 	}
 
 	/**

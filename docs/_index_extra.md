@@ -15,9 +15,13 @@ counts every leftover from older builds at once: `<mac>_0` switch ports, a
 camera removed from Protect, a gateway no longer listed, all marked about
 an hour after the upgrade and then deleted with their history. This cannot
 be undone. Removal follows what the controller lists, so narrowing the
-account's site access removes those sites and their devices too. An empty
-list is never taken as proof that everything is gone, so the last object
-of a kind is not removed automatically. See [REFERENCE.md, Removed objects](../REFERENCE.md#removed-objects).
+account's site access removes those sites and their devices too. Only
+named empty answers are guarded: an empty site list, no device on any
+site, an empty camera list under a listed NVR, and an empty port table,
+radio table or missing `wan1` on a listed device count nothing, so the
+last site, the last device, the last camera and those children are
+removed by hand. The last device of a type is removed when other devices
+are still listed (remove the only switch and it goes, with its ports). See [REFERENCE.md, Removed objects](../REFERENCE.md#removed-objects).
 
 ### Alerts
 

@@ -40,6 +40,11 @@ public final class ReadKindsTest {
 		emptyPortTableIsNotRead();
 		emptyRadioTableIsNotRead();
 		deviceWithNoTypeLeavesDevicesOut();
+		zeroDevicesNamesNoDeviceKind();
+		oneEmptySiteAmongOthersIsRead();
+		gatewayWithoutWan1KeepsWans();
+		siteListRcNotOkNamesNothing();
+		leftOutMatchesKinds();
 		worldIsExcluded();
 		informingStates();
 		System.out.println("ReadKindsTest: all assertions passed");
@@ -48,9 +53,9 @@ public final class ReadKindsTest {
 	/** A healthy devel-shaped cycle: one site, every table, Protect up. */
 	private static ReadKinds complete() {
 		ReadKinds r = new ReadKinds();
-		r.sitesRead(1);
-		r.site(false, true, true);
-		r.gateway(true);
+		r.sitesRead(1, true);
+		r.site(false, true, true, 3);
+		r.gateway(true, true);
 		r.switchPorts(true, true, 8, 0);
 		r.accessPointRadios(true, true, 2, 0);
 		r.protect(true, true, 3, 0);
@@ -146,10 +151,10 @@ public final class ReadKindsTest {
 	 */
 	static void failedSiteMarksNothing() {
 		ReadKinds r = new ReadKinds();
-		r.sitesRead(1);
-		r.site(false, true, true);  // site A read
-		r.site(true, false, true);  // site B failed (or cooling down)
-		r.gateway(true);
+		r.sitesRead(1, true);
+		r.site(false, true, true, 3);  // site A read
+		r.site(true, false, true, 0);  // site B failed (or cooling down)
+		r.gateway(true, true);
 		r.switchPorts(true, true, 8, 0);
 		r.accessPointRadios(true, true, 2, 0);
 		r.protect(true, true, 3, 0);
@@ -174,8 +179,8 @@ public final class ReadKindsTest {
 	/** A 200 whose data is not a device list is as unread as a failure. */
 	static void siteWithNoDeviceListIsNotRead() {
 		ReadKinds r = new ReadKinds();
-		r.sitesRead(1);
-		r.site(false, false, true);
+		r.sitesRead(1, true);
+		r.site(false, false, true, 3);
 		T.eq(set(ReadKinds.SITE, ReadKinds.AGGREGATE), r.kinds(),
 				"no device list: only site kinds");
 	}
@@ -183,9 +188,9 @@ public final class ReadKindsTest {
 	/** Protect bootstrap failed: protect() is never called. */
 	static void protectOutageMarksNoCamera() {
 		ReadKinds r = new ReadKinds();
-		r.sitesRead(1);
-		r.site(false, true, true);
-		r.gateway(true);
+		r.sitesRead(1, true);
+		r.site(false, true, true, 3);
+		r.gateway(true, true);
 		r.switchPorts(true, true, 8, 0);
 		r.accessPointRadios(true, true, 2, 0);
 		Set<String> k = r.kinds();
@@ -205,7 +210,7 @@ public final class ReadKindsTest {
 
 	static void protectWithoutNvrMacKeepsCameras() {
 		ReadKinds r = new ReadKinds();
-		r.sitesRead(1);
+		r.sitesRead(1, true);
 		r.protect(false, true, 3, 0);
 		Set<String> k = r.kinds();
 		T.check(!k.contains(ReadKinds.NVR), "NVR with no MAC: NVR kind not read");
@@ -214,12 +219,12 @@ public final class ReadKindsTest {
 
 	static void cameraListGapsAreNotRead() {
 		ReadKinds a = new ReadKinds();
-		a.sitesRead(1);
+		a.sitesRead(1, true);
 		a.protect(true, false, 3, 0);
 		T.check(!a.kinds().contains(ReadKinds.CAMERA), "cameras not a list");
 		T.check(a.kinds().contains(ReadKinds.NVR), "NVR still read");
 		ReadKinds b = new ReadKinds();
-		b.sitesRead(1);
+		b.sitesRead(1, true);
 		b.protect(true, true, 3, 1);
 		T.check(!b.kinds().contains(ReadKinds.CAMERA), "a camera with no MAC");
 	}
@@ -256,7 +261,7 @@ public final class ReadKindsTest {
 
 	static void gatewayNotInformingKeepsWans() {
 		ReadKinds r = complete();
-		r.gateway(false);
+		r.gateway(false, true);
 		T.check(!r.kinds().contains(ReadKinds.WAN), "gateway down: no WAN kind");
 		T.check(r.kinds().contains(ReadKinds.GATEWAY), "gateway kind still read");
 	}
@@ -299,7 +304,7 @@ public final class ReadKindsTest {
 	 */
 	static void emptySiteListNamesNothing() {
 		ReadKinds r = new ReadKinds();
-		r.sitesRead(0);
+		r.sitesRead(0, true);
 		r.protect(true, true, 3, 0);
 		T.check(r.kinds().isEmpty(), "an empty site list declares nothing");
 
@@ -313,9 +318,9 @@ public final class ReadKindsTest {
 	/** Review R2-W1(a): a 200 whose meta.rc is not ok is not a read. */
 	static void siteRcNotOkIsNotRead() {
 		ReadKinds r = new ReadKinds();
-		r.sitesRead(1);
-		r.site(false, true, ReadKinds.rcOk("error"));
-		r.gateway(true);
+		r.sitesRead(1, true);
+		r.site(false, true, ReadKinds.rcOk("error"), 3);
+		r.gateway(true, true);
 		r.switchPorts(true, true, 8, 0);
 		r.accessPointRadios(true, true, 2, 0);
 		Set<String> k = r.kinds();
@@ -333,8 +338,8 @@ public final class ReadKindsTest {
 	 */
 	static void failedSiteWithAListIsNotRead() {
 		ReadKinds r = new ReadKinds();
-		r.sitesRead(1);
-		r.site(true, true, true);
+		r.sitesRead(1, true);
+		r.site(true, true, true, 3);
 		Set<String> k = r.kinds();
 		for (String kind : NETWORK) {
 			T.check(!k.contains(kind), kind + " not read: failed site with a list");
@@ -385,5 +390,106 @@ public final class ReadKindsTest {
 		}
 		T.check(k.contains(ReadKinds.SITE) && k.contains(ReadKinds.CAMERA),
 				"site and Protect kinds unaffected");
+	}
+
+	/**
+	 * Review R3-B1: every site answered stat/device with meta.rc ok and
+	 * {@code data: []}. No device was walked, so no table flag was set; the
+	 * device count alone keeps all six device kinds out, for 30 cycles.
+	 */
+	static void zeroDevicesNamesNoDeviceKind() {
+		for (int siteCount : new int[] {1, 2}) {
+			ReadKinds r = new ReadKinds();
+			r.sitesRead(siteCount, true);
+			for (int i = 0; i < siteCount; i++) r.site(false, true, true, 0);
+			r.protect(true, true, 3, 0);
+			Set<String> k = r.kinds();
+			T.eq(set(ReadKinds.SITE, ReadKinds.AGGREGATE, ReadKinds.NVR,
+					ReadKinds.CAMERA), k,
+					siteCount + " site(s), zero devices: no device kind");
+			T.check(r.leftOut().containsKey("devices-none"),
+					"zero devices is given as the reason");
+
+			Map<String, String> known = devel();
+			known.put("ap:live", ReadKinds.ACCESS_POINT);
+			known.put("radio:live_ng", ReadKinds.RADIO);
+			known.put("wan:live_wan1", ReadKinds.WAN);
+			Model m = new Model();
+			for (int i = 0; i < 30; i++) {
+				m.cycle(known, set("world", "site:default", "cam:live"), k);
+			}
+			for (String key : new String[] {"gw:live", "gw:old", "sw:live",
+					"port:live_3", "ap:live", "radio:live_ng", "wan:live_wan1"}) {
+				T.check(!m.misses.containsKey(key) && !m.marked.contains(key),
+						key + ": no miss, no mark over 30 empty device cycles");
+			}
+		}
+	}
+
+	/**
+	 * Review R3-B1, accepted residual: one empty site among sites that
+	 * listed devices is a real inventory (a site can be empty).
+	 */
+	static void oneEmptySiteAmongOthersIsRead() {
+		ReadKinds r = new ReadKinds();
+		r.sitesRead(2, true);
+		r.site(false, true, true, 4);
+		r.site(false, true, true, 0);
+		r.gateway(true, true);
+		r.switchPorts(true, true, 8, 0);
+		r.accessPointRadios(true, true, 2, 0);
+		T.check(r.kinds().containsAll(NETWORK), "devices listed elsewhere: read");
+	}
+
+	/** Review R3-W1: an informing gateway with no wan1 keeps its WANs. */
+	static void gatewayWithoutWan1KeepsWans() {
+		ReadKinds r = complete();
+		r.gateway(true, false);
+		T.check(!r.kinds().contains(ReadKinds.WAN), "no wan1: no WAN kind");
+		T.check(r.kinds().contains(ReadKinds.GATEWAY), "gateway kind still read");
+		T.check(r.leftOut().containsKey("wan"), "wan1 gap is given as a reason");
+		T.check(complete().kinds().contains(ReadKinds.WAN),
+				"wan1 present (wan2 not reported here): WAN read");
+	}
+
+	/** Review R3-N1: a site list whose meta.rc is not ok declares nothing. */
+	static void siteListRcNotOkNamesNothing() {
+		ReadKinds r = new ReadKinds();
+		r.sitesRead(1, ReadKinds.rcOk("error"));
+		r.site(false, true, true, 3);
+		r.protect(true, true, 3, 0);
+		T.check(r.kinds().isEmpty(), "site list rc error: nothing read");
+		T.check(!r.siteListRead(), "site list not read");
+		T.check(r.leftOut().containsKey("sites"), "reason given");
+	}
+
+	/**
+	 * Review R3-N2: a complete read gives no reason; each gap gives its own
+	 * key, and every kind left out has a reason.
+	 */
+	static void leftOutMatchesKinds() {
+		T.check(complete().leftOut().isEmpty(), "complete read: no reason");
+		ReadKinds a = complete();
+		a.switchPorts(false, true, 8, 0);
+		T.eq(set("port"), a.leftOut().keySet(), "port gap only");
+		ReadKinds b = complete();
+		b.site(true, false, true, 0);
+		T.eq(set("devices-site"), b.leftOut().keySet(), "unread site");
+		ReadKinds c = complete();
+		c.deviceWithoutIdentity();
+		T.eq(set("devices-identity"), c.leftOut().keySet(), "identity");
+		ReadKinds d = new ReadKinds();
+		d.sitesRead(1, true);
+		d.site(false, true, true, 3);
+		d.gateway(true, true);
+		d.switchPorts(true, true, 8, 0);
+		d.accessPointRadios(true, true, 2, 0);
+		T.eq(set("protect"), d.leftOut().keySet(), "no Protect");
+		ReadKinds e = complete();
+		e.protect(false, true, 0, 0);
+		T.eq(set("nvr", "camera"), e.leftOut().keySet(), "NVR and camera gaps");
+		ReadKinds f = new ReadKinds();
+		f.sitesRead(0, true);
+		T.eq(set("sites"), f.leftOut().keySet(), "empty site list");
 	}
 }

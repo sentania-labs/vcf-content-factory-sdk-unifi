@@ -547,18 +547,44 @@ kind read in full counts a miss:
 
 | Kinds | Counted only when |
 |---|---|
-| Site, Wireless Summary | `/self/sites` was read and listed at least one site |
-| Gateway, Switch, Access Point | every site's device list was read (no failed or cooling-down site, `meta.rc` `ok`), no gateway, switch or access point came without a MAC, and no device record came without a `type` |
-| WAN Interface, Switch Port, Radio | as their device, and every gateway (WAN), switch (port) or access point (radio) is informing the controller and sent a non-empty port or radio table with an index or radio code on every row |
+| Site, Wireless Summary | `/self/sites` was read with `meta.rc` `ok` and listed at least one site |
+| Gateway, Switch, Access Point | every site's device list was read (no failed or cooling-down site, `meta.rc` `ok`), at least one device record came back across all sites, no gateway, switch or access point came without a MAC, and no device record came without a `type` |
+| WAN Interface, Switch Port, Radio | as their device, and every gateway (WAN), switch (port) or access point (radio) is informing the controller; every gateway's record carries `wan1`, and every switch and access point sent a non-empty port or radio table with an index or radio code on every row |
 | NVR, Camera | the Protect bootstrap was read and carried an NVR; the NVR also needs its MAC, cameras need a non-empty camera list with every camera's MAC |
 
-An empty answer is not proof that everything is gone, so an empty list
-counts nothing: an empty site list counts no kind at all (a controller
-always has its default site), `cameras: []` with an NVR present counts no
-camera, and an empty port or radio table counts no port or radio (every
-switch has ports and every access point a radio). The cost is that **the
-last object of a kind is never removed automatically**: when the last site,
-camera, port or radio really goes, delete its object by hand.
+These empty answers are not taken as proof that the objects are gone,
+and count nothing:
+
+- an empty site list, or one whose `meta.rc` is not `ok`: no kind at all
+  (a controller always has its default site);
+- no device record on any site, each answering `meta.rc` `ok` with
+  `data: []`: no gateway, switch, access point, WAN, port or radio (a
+  UniFi OS console lists itself; a Network app mid-start or a proxy stub
+  answers this way);
+- `cameras: []` with an NVR present: no camera;
+- an empty or missing port table on a listed switch, or radio table on a
+  listed access point: no port or radio (every switch has ports and every
+  access point a radio);
+- a listed gateway whose record has no `wan1`: no WAN (every gateway has
+  a WAN 1; a missing `wan2` is a real configuration and is not guarded).
+
+The cost: **the last site, the last device on the controller, the last
+camera under an NVR, and the last port, radio or WAN 1 of a listed device
+are never removed automatically**; delete them by hand.
+
+Nothing else is guarded, and the last object *of a type* is removed when
+other devices are still listed. Remove the only switch while a gateway or
+access point is still listed, and the switch kind is read: that switch and
+its ports are marked and removed, which is correct. Removing a gateway
+removes its WANs, a `wan2` the gateway stops reporting is removed, and a
+site whose devices are all gone loses them while another site still lists
+devices (a site can be empty).
+
+Removal that is off for a kind is never silent: each cycle that leaves a
+kind out logs the kinds and the reason once at INFO, until a cycle without
+that reason ("Removal of vanished objects is off for ..."). A site that
+drops out of the site list is named at WARN on the first cycle it is
+missing.
 
 So one unreadable site, one disconnected switch or one Protect outage
 counts nothing for the kinds it touches, however long it lasts; the count
@@ -573,7 +599,8 @@ back is registered again by discovery; that path is not yet seen live
 factory).
 
 Removal follows what the controller lists, not why it stopped listing it.
-Narrowing the account's site access removes those sites and their devices,
+Narrowing the account's site access removes those sites and their devices
+(the WARN above names each site when it goes missing),
 and a radio the controller no longer reports (for example a band disabled
 in configuration, if UniFi drops it from `radio_table_stats`; not verified)
 is removed too. If it comes back, it returns as a new object with no

@@ -504,7 +504,10 @@ public final class ReadKindsTest {
 	 */
 	static void siteWithoutNameLeavesSiteOut() {
 		ReadKinds r = complete();
+		T.check(!r.siteWithoutIdentitySeen(), "R5-N2: no nameless row yet");
 		r.siteWithoutIdentity();
+		T.check(r.siteWithoutIdentitySeen(), "R5-N2: nameless row seen, no site watch update");
+		T.check(r.siteListRead(), "the list itself was read");
 		T.eq(set(ReadKinds.NVR, ReadKinds.CAMERA), r.kinds(),
 				"nameless site: only Protect kinds read");
 		ReadKinds two = new ReadKinds();

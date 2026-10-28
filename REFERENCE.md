@@ -569,7 +569,10 @@ and count nothing:
   a WAN 1; a missing `wan2` is a real configuration and is not guarded).
 - a site row with no `name`: the row is skipped (no Site with an empty
   key), and no site, Wireless Summary, gateway, switch, access point, WAN,
-  port or radio is counted that cycle.
+  port or radio is counted that cycle. Its `stat/device` is not asked for,
+  it is never the NVR's parent site (when it is the first row, the NVR
+  keeps the site edge it already has), and the "no longer in the
+  controller's site list" WARN is not raised that cycle.
 
 The cost: **the last site, the last device on the controller, the last
 camera under an NVR, and the last port, radio or WAN 1 of a listed device

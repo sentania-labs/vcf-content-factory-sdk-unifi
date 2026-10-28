@@ -822,7 +822,11 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 			}
 		}
 		Configured c = this.configured;
-		if (c == null || !read.siteListRead()) return;
+		// Review R5-N2: a cycle with a nameless row does not update the
+		// watch; that row may be a known site, and its objects take no miss
+		// while site-identity holds, so a "no longer listed" WARN would
+		// overstate what happens.
+		if (c == null || !read.siteListRead() || read.siteWithoutIdentitySeen()) return;
 		for (Map.Entry<String, String> gone : c.siteWatch.update(listedSites).entrySet()) {
 			logWarn("UniFi site '" + gone.getValue() + "' (" + gone.getKey()
 					+ ") is no longer in the controller's site list (deleted, "
@@ -1681,6 +1685,7 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		// ProtectEdgeHold.
 		String nvrSite = s.sites.get("data").size() > 0
 				? s.sites.get("data").get(0).get("name").asString() : null;
+		if (!SiteIsolation.hasName(nvrSite)) nvrSite = null; // review R5-N1
 		boolean holdNvrSite = holdNvrSite(s, nvrSite);
 
 		ResourceKey world = rb.resource("UniFiWorld", "UniFi World",
@@ -1796,9 +1801,12 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 			if (!nvr.isNull() && s.sites.get("data").size() > 0) {
 				SimpleJson firstSite = s.sites.get("data").get(0);
 				String siteName = firstSite.get("name").asString();
+				// Review R5-N1: a nameless first row has no Site key; the
+				// NVR keeps its stored site edge, as for an unread site.
+				boolean namedSite = SiteIsolation.hasName(siteName);
 				String siteDesc = firstSite.get("desc").asString(siteName);
-				ResourceKey siteKey = rb.resource("UniFiSite", siteDesc,
-						"site_name", siteName);
+				ResourceKey siteKey = namedSite ? rb.resource("UniFiSite",
+						siteDesc, "site_name", siteName) : null;
 				// Peer review 7: an NVR with no MAC is not registered, so it
 				// has no edges: no site to NVR edge and no NVR to camera
 				// edges. Its cameras are still registered and collect, with
@@ -1810,7 +1818,7 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 				// (full-set would drop that site's device edges); the NVR
 				// keeps its existing site edge and its cameras below. See
 				// SiteIsolation.nvrParentSite.
-				if (nvrKey != null && java.util.Objects.equals(siteName,
+				if (nvrKey != null && namedSite && siteName.equals(
 						SiteIsolation.nvrParentSite(s.siteNames(), s.failedSites))) {
 					rb.parent(siteKey, nvrKey);
 				}
@@ -2138,10 +2146,13 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 			// fails only when every site fails (or /self/sites, above).
 			// Codex P1: a site refused with 401, 403 or 429 is not asked again
 			// for 15 minutes (60 s after any other failure); it stays failed.
+			// Review R5-N1: a nameless row is not asked for (the enumeration
+			// skips it and leaves Site and device kinds out that cycle).
 			List<String> siteNames = new ArrayList<>();
 			for (SimpleJson site : siteData.asList()) {
 				siteNames.add(site.get("name").asString());
 			}
+			siteNames = SiteIsolation.named(siteNames);
 			SiteReads.Result<SimpleJson> deviceReads = SiteReads.readAll(
 					"stat/device", siteNames, api::statDevice, adapter::logWarn,
 					siteCooldowns, adapter::logInfo);
@@ -2302,13 +2313,13 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 			}
 		}
 
-		/** Site names in /self/sites order. */
+		/** Named site names in /self/sites order (review R5-N1: no nameless rows). */
 		List<String> siteNames() {
 			List<String> names = new ArrayList<>();
 			for (SimpleJson site : sites.get("data").asList()) {
 				names.add(site.get("name").asString());
 			}
-			return names;
+			return SiteIsolation.named(names);
 		}
 
 		SimpleJson devicesForSite(String siteName) {

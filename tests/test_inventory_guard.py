@@ -85,7 +85,8 @@ def main():
     rel = method_body("Relationships", "buildRelationships")
     assert "if (nvrKey != null && !cameras.isNull()) {" in rel, \
         "cameras are parented under an NVR with no identity"
-    assert "if (nvrKey != null && java.util.Objects.equals(siteName," in rel
+    # Review R5-N1: and a named first site.
+    assert "if (nvrKey != null && namedSite && siteName.equals(" in rel
     enum = method_body("void", "enumerateResources")
     assert "if (nvrMac != null) {" in enum
     build = method_body("Snapshot", "build")

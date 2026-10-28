@@ -109,6 +109,10 @@ def gap_logging():
     # The site watch is fed only a fully read list (no warn, no forget on
     # an empty or rc-failed one), and warns.
     assert body.index("!read.siteListRead()") < body.index("c.siteWatch.update(listedSites)")
+    # Review R5-N2: not in a cycle with a nameless row.
+    assert ("if (c == null || !read.siteListRead() || read.siteWithoutIdentitySeen()) return;"
+            in body)
+    assert body.index("read.siteWithoutIdentitySeen()") < body.index("c.siteWatch.update(listedSites)")
     assert "logWarn(" in body
     assert "final SiteListWatch siteWatch = new SiteListWatch();" in SRC
 
@@ -131,6 +135,16 @@ def relationships():
     # branch, so a cycle without Protect sends no set for it.
     protect = rel[rel.index("if (s.protect != null) {"):rel.index("emitVmnicHostStitch(rb, s);")]
     assert "rb.parent(siteKey, nvrKey);" in protect
+    # Review R5-N1: a nameless first row is no Site key and no NVR parent.
+    assert "if (!SiteIsolation.hasName(nvrSite)) nvrSite = null;" in rel
+    assert rel.index("if (!SiteIsolation.hasName(nvrSite)) nvrSite = null;") < rel.index(
+        "holdNvrSite(s, nvrSite)")
+    assert "boolean namedSite = SiteIsolation.hasName(siteName);" in protect
+    assert ('ResourceKey siteKey = namedSite ? rb.resource("UniFiSite",\n'
+            '\t\t\t\t\t\tsiteDesc, "site_name", siteName) : null;') in protect
+    assert ("if (nvrKey != null && namedSite && siteName.equals(\n"
+            "\t\t\t\t\t\tSiteIsolation.nvrParentSite(s.siteNames(), s.failedSites))) {") in protect
+    assert protect.index("namedSite && siteName.equals(") < protect.index("rb.parent(siteKey, nvrKey);")
     assert "rb.parent(nvrKey," in protect
     outside = rel.replace(protect, "")
     assert "nvrKey" not in outside, "NVR edges built outside the Protect branch"
@@ -141,6 +155,16 @@ def relationships():
     knows = method_body("Boolean", "platformKnowsNvr")
     assert "getMonitoringResources()" in knows and "getStoppedResources()" in knows
     assert "catch (RuntimeException e) {\n\t\t\treturn null;" in knows
+
+
+def snapshot_site_names():
+    # Review R5-N1: stat/device is never asked for a nameless row, and the
+    # NVR parent heuristic sees named sites only.
+    build = method_body("Snapshot", "build")
+    named = build.index("siteNames = SiteIsolation.named(siteNames);")
+    assert named < build.index("SiteReads.readAll(\n\t\t\t\t\t\"stat/device\", siteNames,")
+    names = method_body("List<String>", "siteNames")
+    assert "return SiteIsolation.named(names);" in names
 
 
 def stitch():
@@ -160,6 +184,7 @@ def main():
     enumeration()
     gap_logging()
     relationships()
+    snapshot_site_names()
     stitch()
     print("test_vanished_wiring: all assertions passed")
 

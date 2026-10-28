@@ -95,7 +95,8 @@ list (no kind at all); no device on any site (no gateway, switch, access
 point, WAN, port or radio); an empty camera list while the NVR is listed;
 an empty or missing port table on a listed switch, radio table on a listed
 access point, or `wan1` on a listed gateway. A site row with no `name`
-is skipped and counts nothing for sites or devices that cycle. Everything else is removed
+is skipped and counts nothing for sites or devices that cycle; it is not
+read, not the NVR's parent, and raises no "no longer listed" WARN. Everything else is removed
 when it stops being listed, the last of its type included: remove the only
 switch while a gateway or access point is still listed and that switch and
 its ports are removed; remove a gateway and its WANs go with it; a site

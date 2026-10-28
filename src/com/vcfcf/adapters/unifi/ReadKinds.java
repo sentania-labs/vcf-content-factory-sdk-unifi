@@ -130,6 +130,14 @@ final class ReadKinds {
 		siteWithoutIdentity = true;
 	}
 
+	/**
+	 * Review R5-N2: a nameless row was seen this cycle, so the listed
+	 * sites are not the whole list and the site watch is not updated.
+	 */
+	boolean siteWithoutIdentitySeen() {
+		return siteWithoutIdentity;
+	}
+
 	/** The site list was read in full: at least one site, meta.rc ok. */
 	boolean siteListRead() {
 		return sitesRead;

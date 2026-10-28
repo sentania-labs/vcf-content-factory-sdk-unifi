@@ -1,0 +1,15 @@
+name: "[VCF Content Factory] UniFi NVR Volume At Risk"
+adapter_kind: unifi_controller
+resource_kind: UniFiNvr
+severity: WARNING
+wait_cycles: 3
+cancel_cycles: 3
+
+condition:
+  type: property
+  key: Storage|volume_display_health
+  operator: EQ
+  value: "atrisk"
+
+description: >
+  Triggers when the NVR volume health is atrisk (Storage|volume_display_health), the health Protect's storage page displays. Volume fullness is deliberately not considered.

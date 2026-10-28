@@ -382,6 +382,18 @@ Generated from `describe.xml` and `resources.properties` for build 18 (dev 0.0.0
 | `total_bytes` | Total | metric | bytes | yes |
 | `usage_pct` | Usage % | metric | % | yes |
 | `source` | Source | property | - | - |
+| `volume_health` | Volume Health | property | - | - |
+| `volume_display_health` | Volume Display Health | property | - | - |
+| `volume_issues` | Volume Issues | property | - | - |
+| `volume_action` | Volume Action | property | - | - |
+| `volume_device` | Volume Device | property | - | - |
+| `drive_count` | Drives | metric | - | yes |
+| `drives_not_healthy` | Drives Not Healthy | metric | - | yes |
+| `drives_failed` | Drives Failed | metric | - | yes |
+| `unhealthy_drive_slot` | First Unhealthy Drive Slot | property | - | - |
+| `unhealthy_drive_state` | First Unhealthy Drive State | property | - | - |
+| `drive_bad_sectors` | Drive Bad Sectors | metric | - | yes |
+| `hard_drive_state` | Hard Drive State | property | - | - |
 
 > Build 18 (issue #39): bytes, from the Protect bootstrap's
 > `nvr.systemInfo.storage` (`size`, `used`: the recording volume; on the
@@ -400,6 +412,80 @@ Generated from `describe.xml` and `resources.properties` for build 18 (dev 0.0.0
 > send, so the three never published. Protect fills the volume and then
 > recycles the oldest footage, so a usage near 100 % is normal for a
 > recording NVR (devel: 99.1 %).
+
+> Build 19: **storage health**, from the bootstrap's `nvr.systemInfo.ustorage`
+> (a trimmed copy of UniFi OS `/api/system` `ustorage`), values
+> verbatim and each only when Protect sends it. The volume is the
+> `space[]` entry with `space_type` `primary`, else the only one that is
+> neither `root` nor `swap`, else, when no entry carries a `space_type`, the
+> first (the UniFi OS storage page's choice); nothing is published when none
+> of these picks one. `volume_health` is its `health`:
+> `health` (Protect's word for healthy; the UI also accepts `healthy`),
+> `atrisk` (UI: "Storage At Risk of Failure", orange) or `failed` ("Storage
+> has Failed", red). `volume_issues` is its `reasons[]` as `type:level`,
+> comma separated in Protect's order; the UI's types are `disk_atrisk`,
+> `disk_failed`, `space_degrade`, `space_failed`, `space_ro`,
+> `lacking_disk`, `io_err`, `raid_bad_blocks`; `none` when the list is
+> empty. A reason's `slot` is not published: on devel it reads 0 while the
+> only drive is in slot 1.
+>
+> `volume_display_health` (build 19 review) is the health the storage page
+> displays, by the console UI's own rule (main bundle, read 2026-10-28):
+> `health` and `healthy` display as `healthy`, `failed` as `failed`, and
+> `atrisk` as `atrisk`, except that a `primary` volume whose only reason is
+> `lacking_disk:atrisk` displays `healthy` when it has no RAID block or its
+> RAID never had all its members (`raid.had_most` below `raid.expected`).
+> Protect's bootstrap trims the RAID block, so the pack reads it from UniFi
+> OS `/api/system` (`ustorage.space[]`, GET only, same session, once per
+> cycle while Protect sends an NVR), matched by `device`. When that block
+> cannot be read (the call fails or is refused, or the device is not
+> listed), the exception is not applied and the volume displays `atrisk`.
+> An `atrisk` volume with no reasons list displays `atrisk`. A value
+> outside `healthy`, `atrisk` and `failed` is published verbatim (the UI
+> cannot render it), and nothing is published when the volume carries no
+> `health`. Devel reads `atrisk` (`io_err:atrisk`; RAID expected 2, had
+> most 1). The bundled alert reads this property, not `volume_health`.
+> A failed or refused `/api/system` costs only the exception: everything
+> else is collected, a refusal (401, 403 or 429) is not asked again for 15
+> minutes (one WARN), and any other failure is logged at INFO once per
+> streak of cycles.
+> `volume_action` is `none`, `syncing`, `repairing`, `expanding`,
+> `formatting`, `erasing`, `checking` or `scanning`.
+>
+> The drive values come from `disks[]` and are published together, and
+> only when every entry has a `state` and a `slot` (a count over a list
+> the pack cannot read in full would vouch for a drive it never saw). An
+> empty bay (`state` `nodisk`) is not a drive. `drives_not_healthy` counts
+> the drives the UniFi OS storage page shows orange or red: state `risk`,
+> `spare_at_risk`, `foreign`, `repairing`, `incompatible`, `broken`,
+> `faulty` or `not_support`, or a `health` of `at_risk` or `broken`, or a
+> `reason` naming a risk (`abnormal_smart`, `too_many_read_error`,
+> `too_many_bad_sectors`, `too_short_life_span`, `too_many_unc_count`,
+> `too_many_get_smart_error`, `investigation_needed`); a state this pack
+> does not know also counts, so it is surfaced, never passed. A `spare`
+> with any `reason` counts too (the UI shows it as `spare_at_risk`: "cannot
+> serve as a hot spare"). Green: `normal`, `initializing`, `expanding`;
+> black: `spare`; neutral: `probing`. During a two-member mirror resync
+> (the volume displays `healthy`, its `action` is `repairing`, RAID expected
+> 2 with had most at least 2, one drive `normal` and one `repairing`) the
+> UI shows the `repairing` drive as `initializing`, and so does the pack:
+> it is not counted. Without the RAID block a `repairing` drive counts.
+> `drives_failed` counts the red ones only (`broken`, `faulty`,
+> `not_support`, or `health` `broken`). `unhealthy_drive_slot` and
+> `unhealthy_drive_state` name the lowest-slot unhealthy drive, verbatim,
+> and read `none` when none is. `drive_bad_sectors` is the sum of
+> `bad_sector` over the drives, only when every drive carries it. The
+> drive's own `healthy` field (`good` on devel) is not used: its other
+> values are not known. `hard_drive_state` is Protect's NVR-level
+> `hardDriveState`, verbatim (`hddNotCompatible` on devel, whose only
+> drive reads state `normal`); its meaning and vocabulary are not
+> known, so no alert reads it.
+>
+> A part of `ustorage` the pack cannot use (no `ustorage` object, no
+> recording volume, a volume with no `health`, a disk list it cannot read in
+> full, or an `atrisk` volume whose RAID block was not read) is logged at INFO once per streak of
+> cycles, per NVR. Only JSON scalars are read as text: an object or list
+> where Protect's word is expected publishes nothing.
 
 #### Configuration
 
@@ -637,12 +723,14 @@ hand to stop it.
 
 ## Alerts
 
-Build 16 (issue #30) ships eight alert definitions, their symptoms
-(twelve in build 16, fourteen from build 17, which adds two scoping
-symptoms) and six recommendations as bundled content (`symptoms/`,
-`alerts/`, `recommendations/`, listed under `bundled_content` in
-`adapter.yaml`). They install with the pak. Every name starts with `[VCF Content Factory] `
-(omitted in the tables below).
+Build 16 (issue #30) ships the alert definitions, their symptoms and
+recommendations as bundled content (`symptoms/`, `alerts/`,
+`recommendations/`, listed under `bundled_content` in `adapter.yaml`): eight
+alerts, twelve symptoms and six recommendations in build 16, fourteen
+symptoms from build 17 (two scoping symptoms), and from build 19 nine
+alerts, nineteen symptoms and seven recommendations (NVR Storage At Risk,
+its five symptoms and one recommendation). They install with the pak. Every
+name starts with `[VCF Content Factory] ` (omitted in the tables below).
 
 Timing: each symptom waits 3 collection cycles before it triggers and 3
 before it clears (about 15 minutes at the default 5-minute interval); the
@@ -659,6 +747,7 @@ object itself.
 | UniFi Camera Not Recording | UniFi Camera | Warning | Health | `Status\|is_recording` is `false` **and** `Status\|is_connected` is `true` **and** `Configuration\|recording_mode` is not `never` (a disconnected camera fires Camera Offline instead; a camera set never to record does not fire) |
 | UniFi PoE Budget Nearly Exhausted | UniFi Switch | Warning | Risk | `PoE\|poe_budget_used_pct` >= 90 **and** `Status\|state` = 1 (connected, so a disconnected switch's last PoE value does not hold the alert) |
 | UniFi WAN Degraded | UniFi WAN Interface | Warning | Health | `Status\|up` is `true` **and** (`Health\|availability` < 99 **or** `Health\|latency` > 100 ms); an unused WAN (link down) does not fire |
+| UniFi NVR Storage At Risk | UniFi NVR | Symptom-based (Critical when failed, else Warning) | Health | `Storage\|volume_display_health` is `failed` **or** `atrisk` **or** not one of `healthy`, `atrisk`, `failed`, **or** `Storage\|drives_failed` > 0 **or** `Storage\|drives_not_healthy` > 0. The volume value is what Protect's storage page displays, so a volume at risk only for a missing drive in an array that never had all its members does not fire, as in Protect; when the RAID block cannot be read it does fire. Fullness (`usage_pct`) is not read |
 
 The device offline alerts match only `disconnected` and `heartbeat missed`:
 upgrading, provisioning, adopting, pending adoption and inform error do not
@@ -698,6 +787,17 @@ these alerts read is published only when the controller sends its field
   not `never`. A camera whose Protect sends no `recordingSettings.mode`
   does not fire. A camera on a `schedule` mode is not excluded and can fire
   outside its scheduled hours; disable the alert for that camera if so.
+- **NVR storage: Protect's verdict only.** NVR Storage At Risk fires on
+  the health Protect's storage page displays and on its drive states and
+  risk reasons, never on the pak's own thresholds: a drive with a few
+  remapped sectors that Protect still calls healthy does not fire
+  (`Storage|drive_bad_sectors` is published for context), nor does an
+  `io_err` reason on a volume Protect still displays healthy
+  (`Storage|volume_issues` shows it). Storage fullness is never alerted:
+  Protect fills the volume to its retention limit by design. An NVR whose
+  Protect sends no `health` for the volume publishes no
+  `volume_display_health`, so the volume part cannot fire (logged once per
+  streak).
 - **Stale holds.** VCF Operations keeps a property's or metric's last value
   when the pak stops publishing it, so:
   - While a gateway is not informing the controller its WAN interfaces
@@ -730,6 +830,11 @@ these alerts read is published only when the controller sends its field
 | UniFi WAN Availability Low | UniFi WAN Interface | Warning | metric `Health\|availability` < 99 |
 | UniFi WAN Latency High | UniFi WAN Interface | Warning | metric `Health\|latency` > 100 |
 | UniFi WAN Link Up | UniFi WAN Interface | Info | property `Status\|up` = `true` (scoping only) |
+| UniFi NVR Volume Failed | UniFi NVR | Critical | property `Storage\|volume_display_health` = `failed` |
+| UniFi NVR Volume At Risk | UniFi NVR | Warning | property `Storage\|volume_display_health` = `atrisk` |
+| UniFi NVR Volume Health Unrecognised | UniFi NVR | Warning | property `Storage\|volume_display_health` matches `^(?!(healthy\|atrisk\|failed)$).*` (regex with a negative lookahead: any value but those three) |
+| UniFi NVR Drive Failed | UniFi NVR | Critical | metric `Storage\|drives_failed` > 0 |
+| UniFi NVR Drive Not Healthy | UniFi NVR | Warning | metric `Storage\|drives_not_healthy` > 0 |
 
 ### Recommendations
 
@@ -741,3 +846,4 @@ these alerts read is published only when the controller sends its field
 | UniFi Investigate Camera Not Recording | Camera Not Recording |
 | UniFi Reduce Switch PoE Load | PoE Budget Nearly Exhausted |
 | UniFi Investigate WAN Degradation | WAN Degraded |
+| UniFi Investigate NVR Storage At Risk | NVR Storage At Risk |

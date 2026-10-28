@@ -1,0 +1,38 @@
+name: "[VCF Content Factory] UniFi NVR Storage At Risk"
+description: >
+  Fires when UniFi Protect reports the NVR recording volume as failed or at risk, when the volume health is a value this pak does not recognise, or when Protect reports a drive as failed or not healthy. The volume condition follows the volume health that Protect's storage page displays, using Protect's own rules, including its exception that a volume at risk only because it lacks a drive is shown as healthy. The drive conditions follow Protect's own drive states. Storage fullness and raw bad-sector counts are deliberately not alerted on: Protect fills to its retention limit by design, and it already folds excessive bad sectors into its drive state.
+adapter_kind: unifi_controller
+resource_kind: UniFiNvr
+type: 17
+sub_type: 18
+wait_cycles: 1
+cancel_cycles: 1
+criticality: SYMPTOM_BASED
+impact:
+  badge: HEALTH
+symptom_sets:
+  operator: ANY
+  sets:
+    - defined_on: SELF
+      operator: ALL
+      symptoms:
+        - name: "[VCF Content Factory] UniFi NVR Volume Failed"
+    - defined_on: SELF
+      operator: ALL
+      symptoms:
+        - name: "[VCF Content Factory] UniFi NVR Volume At Risk"
+    - defined_on: SELF
+      operator: ALL
+      symptoms:
+        - name: "[VCF Content Factory] UniFi NVR Volume Health Unrecognised"
+    - defined_on: SELF
+      operator: ALL
+      symptoms:
+        - name: "[VCF Content Factory] UniFi NVR Drive Failed"
+    - defined_on: SELF
+      operator: ALL
+      symptoms:
+        - name: "[VCF Content Factory] UniFi NVR Drive Not Healthy"
+recommendations:
+  - name: "[VCF Content Factory] UniFi Investigate NVR Storage At Risk"
+    priority: 1

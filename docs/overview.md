@@ -97,17 +97,39 @@ as a value (review of build 16):
   only when the controller sends their field; before, a missing field read
   `false` (or `Half`), which the alerts would act on.
 
+Build 19 adds the NVR's storage health, as Protect reports it, on the NVR
+(`Storage|...`, present-only, values verbatim): the recording volume's
+`volume_health` (`health`, `atrisk`, `failed`), `volume_display_health`
+(what Protect's storage page displays: `healthy`, `atrisk`, `failed`, by
+the console UI's own rule, with the volume's RAID block read from UniFi OS
+`/api/system`), `volume_issues` (Protect's
+reasons as `type:level`, such as `io_err:atrisk`; `none` for an empty
+list), `volume_action` and `volume_device`; the drive counts `drive_count`,
+`drives_not_healthy` and `drives_failed`, with the lowest-slot unhealthy
+drive's `unhealthy_drive_slot` and `unhealthy_drive_state` (`none` when no
+drive is unhealthy) and `drive_bad_sectors`; and Protect's NVR-level
+`hard_drive_state`. "Not healthy" and "failed" follow the UniFi OS storage
+page's own colours (orange and red), including a hot spare with errors and
+a mirror resync the UI shows as initializing. Alert on these, not on
+`Storage|usage_pct`: Protect fills the volume to its retention limit by
+design, so a full volume is normal.
+
 ### Alerts
 
-Build 16 (issue #30) bundles eight alerts, fourteen symptoms (twelve before build 17) and six
-recommendations, installed with the pak: gateway, switch and access point
+Nine alerts, nineteen symptoms and seven recommendations are bundled and
+installed with the pak (build 16 shipped eight, twelve and six; build 17
+added two scoping symptoms; build 19 adds NVR Storage At Risk with five
+symptoms and one recommendation): gateway, switch and access point
 offline (`Status|state_code` disconnected or heartbeat missed, so a
 firmware upgrade does not fire), uplink port down, camera offline, camera
 not recording (connected cameras not set never to record), PoE budget nearly exhausted
-(`PoE|poe_budget_used_pct` >= 90 on a connected switch) and WAN degraded
+(`PoE|poe_budget_used_pct` >= 90 on a connected switch), WAN degraded
 (availability below 99 or latency above 100 ms, on a WAN whose link is
-up). What they do not catch (a WAN that loses its link, a switch that
-loses its only uplink, inform-error devices, stale holds) is listed in
+up) and NVR storage at risk (the volume health Protect's storage page
+displays is failed, at risk or unrecognised, or a drive is failed or not
+healthy; never fullness). What they do not catch (a WAN that loses its link, a switch that
+loses its only uplink, inform-error devices, NVR storage the pak's own
+thresholds would flag but Protect does not, stale holds) is listed in
 `REFERENCE.md`, Alerts, Limits. The full table (object,
 severity, badge, conditions) is in `REFERENCE.md`, Alerts.
 

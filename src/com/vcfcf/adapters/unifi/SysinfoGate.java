@@ -20,12 +20,28 @@ final class SysinfoGate {
 
 	private final SnapshotCache.Clock clock;
 	private final long authMs;
+	/** The call, as logged ({@code stat/sysinfo}). */
+	private final String call;
+	/** What a refusal costs, as logged. */
+	private final String loss;
 	private long until;
 	private int status;
 
 	SysinfoGate(SnapshotCache.Clock clock, long authMs) {
+		this(clock, authMs, "stat/sysinfo",
+				"the sites' Version and Timezone are not published");
+	}
+
+	/**
+	 * Build 19 review B2: the same gate for another once-per-build call
+	 * ({@code /api/system}), named {@code call} in its log lines, with
+	 * {@code loss} saying what a refusal costs.
+	 */
+	SysinfoGate(SnapshotCache.Clock clock, long authMs, String call, String loss) {
 		this.clock = clock;
 		this.authMs = authMs;
+		this.call = call;
+		this.loss = loss;
 	}
 
 	/** Whether to ask this build; INFO once when a window has passed. */
@@ -34,7 +50,7 @@ final class SysinfoGate {
 		long now = clock.millis();
 		if (now < until && now >= until - authMs) return false;
 		// Passed (or the clock stepped back past its start): ask again.
-		info.accept("Snapshot: stat/sysinfo cool-down (HTTP " + status
+		info.accept("Snapshot: " + call + " cool-down (HTTP " + status
 				+ ") has passed; asking again this build.");
 		status = 0;
 		return true;
@@ -47,14 +63,13 @@ final class SysinfoGate {
 		if (s != 0) {
 			status = s;
 			until = clock.millis() + authMs;
-			warn.accept("Snapshot: stat/sysinfo refused with HTTP " + s + " ("
+			warn.accept("Snapshot: " + call + " refused with HTTP " + s + " ("
 					+ UniFiFailures.refusalKind(e) + "): not asked again for "
 					+ (authMs / 1000L) + " s unless the adapter instance settings "
-					+ "are edited; the sites' Version and Timezone are not "
-					+ "published until then.");
+					+ "are edited; " + loss + " until then.");
 		} else {
-			info.accept("Snapshot: stat/sysinfo not available this build "
-					+ "(Version and Timezone not published): " + e.getMessage());
+			info.accept("Snapshot: " + call + " not available this build ("
+					+ loss + "): " + e.getMessage());
 		}
 	}
 

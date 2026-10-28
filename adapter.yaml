@@ -1,5 +1,5 @@
 adapter_kind: unifi_controller
-build_number: 18
+build_number: 19
 description: 'Monitors UniFi infrastructure on a UniFi OS console through its Network
   application and Protect APIs (classic and self-hosted Network controllers are not
   supported). Discovers sites, gateways, switches, access points, NVR, and cameras. Per-switch-port
@@ -21,6 +21,11 @@ bundled_content:
     - symptoms/unifi_camera_recording_enabled.yaml
     - symptoms/unifi_gateway_offline.yaml
     - symptoms/unifi_poe_budget_high.yaml
+    - symptoms/unifi_nvr_drive_failed.yaml
+    - symptoms/unifi_nvr_drive_not_healthy.yaml
+    - symptoms/unifi_nvr_volume_at_risk.yaml
+    - symptoms/unifi_nvr_volume_failed.yaml
+    - symptoms/unifi_nvr_volume_health_unrecognised.yaml
     - symptoms/unifi_port_is_uplink.yaml
     - symptoms/unifi_port_link_down.yaml
     - symptoms/unifi_switch_connected.yaml
@@ -33,6 +38,7 @@ bundled_content:
     - alerts/unifi_camera_not_recording.yaml
     - alerts/unifi_camera_offline.yaml
     - alerts/unifi_gateway_offline.yaml
+    - alerts/unifi_nvr_storage_at_risk.yaml
     - alerts/unifi_poe_budget_nearly_exhausted.yaml
     - alerts/unifi_switch_offline.yaml
     - alerts/unifi_uplink_port_down.yaml
@@ -40,6 +46,7 @@ bundled_content:
   recommendations:
     - recommendations/unifi_investigate_camera_not_recording.yaml
     - recommendations/unifi_investigate_disconnected_camera.yaml
+    - recommendations/unifi_investigate_nvr_storage_at_risk.yaml
     - recommendations/unifi_investigate_offline_network_device.yaml
     - recommendations/unifi_investigate_uplink_port_down.yaml
     - recommendations/unifi_investigate_wan_degradation.yaml

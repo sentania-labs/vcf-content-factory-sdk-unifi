@@ -1,0 +1,15 @@
+name: "[VCF Content Factory] UniFi NVR Volume Failed"
+adapter_kind: unifi_controller
+resource_kind: UniFiNvr
+severity: CRITICAL
+wait_cycles: 3
+cancel_cycles: 3
+
+condition:
+  type: property
+  key: Storage|volume_display_health
+  operator: EQ
+  value: "failed"
+
+description: >
+  Triggers when the NVR volume health is failed (Storage|volume_display_health), the health Protect's storage page displays.

@@ -1,0 +1,10 @@
+name: "[VCF Content Factory] UniFi Investigate NVR Storage At Risk"
+description: |
+  UniFi Protect reports that the NVR recording volume or one of its drives is failed or at risk, that its health value is not one this pak recognises, or that a drive is failed or not healthy.
+
+  Open UniFi Protect, go to Settings > Storage, and check the status of each drive and of the volume. Replace the drive in the slot that Protect names.
+
+  A volume made of a single drive loses its recordings when that drive fails, so replace an at-risk drive before it fails if recordings matter.
+
+  If the volume shows a missing RAID member, add a drive or replace the failed one so the array can rebuild.
+adapter_kind: unifi_controller

@@ -1,6 +1,6 @@
 # Inventory Tree: VCF Content Factory UniFi Controller
 
-> Generated from `describe.xml` v0.0.0.18. Do not edit: regenerated on every build.
+> Generated from `describe.xml` v0.0.0.19. Do not edit: regenerated on every build.
 
 **Traversal Spec:** UniFi Controller Infrastructure
 
@@ -11,9 +11,14 @@
     - **UniFi Gateway** (`UniFiGateway`)
       - **UniFi WAN Interface** (`UniFiWanInterface`)
       - **UniFi Switch** (`UniFiSwitch`)
+        - **UniFi Switch** (`UniFiSwitch`) *(recursive: nests under itself)*
         - **UniFi Switch Port** (`UniFiSwitchPort`)
         - **UniFi Access Point** (`UniFiAccessPoint`)
+          - **UniFi Access Point** (`UniFiAccessPoint`) *(recursive: nests under itself)*
           - **UniFi Radio** (`UniFiRadio`)
+      - **UniFi Access Point** (`UniFiAccessPoint`) *(see above)*
+    - **UniFi Switch** (`UniFiSwitch`) *(see above)*
+    - **UniFi Access Point** (`UniFiAccessPoint`) *(see above)*
     - **UniFi NVR** (`UniFiNvr`)
       - **UniFi Camera** (`UniFiCamera`)
     - **UniFi Wireless Summary** (`UniFiWirelessAggregate`)
@@ -28,9 +33,9 @@
 | `UniFiSite` | UniFi Site | `site_name` * | UniFi World |
 | `UniFiGateway` | UniFi Gateway | `mac` * | UniFi Site |
 | `UniFiWanInterface` | UniFi WAN Interface | `wan_name` * | UniFi Gateway |
-| `UniFiSwitch` | UniFi Switch | `mac` * | UniFi Gateway, UniFi Site |
+| `UniFiSwitch` | UniFi Switch | `mac` * | UniFi Gateway, UniFi Switch, UniFi Site |
 | `UniFiSwitchPort` | UniFi Switch Port | `port_key` * | UniFi Switch |
-| `UniFiAccessPoint` | UniFi Access Point | `mac` * | UniFi Switch, UniFi Gateway, UniFi Site |
+| `UniFiAccessPoint` | UniFi Access Point | `mac` * | UniFi Switch, UniFi Access Point, UniFi Gateway, UniFi Site |
 | `UniFiRadio` | UniFi Radio | `radio_key` * | UniFi Access Point |
 | `UniFiWirelessAggregate` | UniFi Wireless Summary | `aggregate_id` * | UniFi Site |
 | `UniFiNvr` | UniFi NVR | `nvr_mac` * | UniFi Site |

@@ -1,0 +1,15 @@
+name: "[VCF Content Factory] UniFi NVR Volume Health Unrecognised"
+adapter_kind: unifi_controller
+resource_kind: UniFiNvr
+severity: WARNING
+wait_cycles: 3
+cancel_cycles: 3
+
+condition:
+  type: property
+  key: Storage|volume_display_health
+  operator: REGEX
+  value: "^(?!(healthy|atrisk|failed)$).*"
+
+description: >
+  Triggers when the NVR volume health that Protect's storage page displays (Storage|volume_display_health) is not one of healthy, atrisk or failed, so a new or unexpected state is not silently missed.

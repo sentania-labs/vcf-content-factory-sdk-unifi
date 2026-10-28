@@ -29,7 +29,11 @@ import java.util.Set;
  *       empty site list is not proof that everything is gone (a controller
  *       always carries its default site; a Network app mid-restore, an
  *       account whose site access was emptied or a proxy stub can answer
- *       {@code []}), so it declares no kind at all (review R2-B1).</li>
+ *       {@code []}), so it declares no kind at all (review R2-B1). A site
+ *       row with no {@code name} (the key every site URL and the site's
+ *       resource key are built on) is skipped, and leaves Site, Wireless
+ *       Summary and the six device kinds out: the site it was is unknown,
+ *       so its objects take no miss (review R4-N1).</li>
  *   <li>{@code UniFiGateway}, {@code UniFiSwitch}, {@code UniFiAccessPoint}:
  *       only when every site's {@code stat/device} was read (no failed or
  *       cooling-down site, every payload a device list with
@@ -92,6 +96,7 @@ final class ReadKinds {
 	private boolean sitesRead;
 	private boolean siteListEmpty;
 	private boolean siteListRcNotOk;
+	private boolean siteWithoutIdentity;
 	private boolean everySiteRead = true;
 	private int deviceRecords;
 	private boolean deviceWithoutIdentity;
@@ -113,6 +118,16 @@ final class ReadKinds {
 		siteListEmpty = siteCount <= 0;
 		siteListRcNotOk = !rcOk;
 		sitesRead = !siteListEmpty && rcOk;
+	}
+
+	/**
+	 * A {@code /self/sites} row with no {@code name} (review R4-N1). The
+	 * adapter skips it (no Site with a null key); which site it was is
+	 * unknown, and its devices were not read, so Site, Wireless Summary and
+	 * every device kind are left out this cycle.
+	 */
+	void siteWithoutIdentity() {
+		siteWithoutIdentity = true;
 	}
 
 	/** The site list was read in full: at least one site, meta.rc ok. */
@@ -240,9 +255,16 @@ final class ReadKinds {
 					+ (siteListEmpty ? "was empty" : "meta.rc was not ok"));
 			return;
 		}
-		out.add(SITE);
-		out.add(AGGREGATE);
-		if (!everySiteRead) {
+		if (siteWithoutIdentity) {
+			why.put("site-identity", "site, Wireless Summary, " + DEVICE_KINDS
+					+ ": a site in the site list had no name");
+		} else {
+			out.add(SITE);
+			out.add(AGGREGATE);
+		}
+		if (siteWithoutIdentity) {
+			// Reason given above; that site's devices were not read.
+		} else if (!everySiteRead) {
 			why.put("devices-site", DEVICE_KINDS + ": a site's stat/device "
 					+ "failed, is cooling down, was not a device list or its "
 					+ "meta.rc was not ok");

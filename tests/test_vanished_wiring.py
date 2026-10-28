@@ -68,6 +68,11 @@ def enumeration():
     assert ('ReadKinds.rcOk(sitePayload.get("meta").get("rc").asString("")),\n'
             '\t\t\t\t\tsiteDevices.isList() ? siteDevices.asList().size() : 0);') in enum
     assert enum.count("read.site(") == 1
+    # Review R4-N1: a nameless site row is declared and skipped before it
+    # is emitted or read.
+    guard = enum.index("if (siteName == null || siteName.trim().isEmpty()) {\n\t\t\t\tread.siteWithoutIdentity();\n\t\t\t\tcontinue;")
+    assert guard < enum.index('out.accept(rcOf("UniFiSite"')
+    assert guard < enum.index("read.site(s.failedSites")
     assert "read.deviceWithoutIdentity();" in enum
     # Review R2-N2: a record with no type is unknown, as a MAC-less one.
     assert "if (type.trim().isEmpty()) read.deviceWithoutIdentity();" in enum
@@ -116,6 +121,8 @@ def relationships():
     # A held site still hangs under the World, and is skipped before any of
     # its children go into the builder (no reduced full set).
     loop = rel[rel.index("for (SimpleJson site :"):rel.index("// Protect: NVR")]
+    nameless = loop.index("if (siteName == null || siteName.trim().isEmpty()) continue;")
+    assert nameless < loop.index('ResourceKey siteKey = rb.resource("UniFiSite"')
     held = loop.index("if (holdNvrSite && siteName != null && siteName.equals(nvrSite)) {")
     assert loop.index("rb.parent(world, siteKey);") < held
     assert held < loop.index("SimpleJson devices = s.devicesForSite(siteName);")

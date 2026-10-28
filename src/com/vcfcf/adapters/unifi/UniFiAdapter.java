@@ -645,6 +645,13 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 
 		for (SimpleJson site : s.sites.get("data").asList()) {
 			String siteName = site.get("name").asString();
+			// Review R4-N1: no name, no identity; the row is not a Site with
+			// a null key, and Site, Wireless Summary and the device kinds
+			// are left out this cycle.
+			if (siteName == null || siteName.trim().isEmpty()) {
+				read.siteWithoutIdentity();
+				continue;
+			}
 			String siteDesc = site.get("desc").asString(siteName);
 			out.accept(rcOf("UniFiSite", siteDesc, "site_name", siteName));
 			sites++;
@@ -1681,6 +1688,8 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 
 		for (SimpleJson site : s.sites.get("data").asList()) {
 			String siteName = site.get("name").asString();
+			// Review R4-N1: a nameless row was not enumerated; no edges.
+			if (siteName == null || siteName.trim().isEmpty()) continue;
 			String siteDesc = site.get("desc").asString(siteName);
 			ResourceKey siteKey = rb.resource("UniFiSite", siteDesc,
 					"site_name", siteName);

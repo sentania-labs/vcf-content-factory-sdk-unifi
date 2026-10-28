@@ -547,7 +547,7 @@ kind read in full counts a miss:
 
 | Kinds | Counted only when |
 |---|---|
-| Site, Wireless Summary | `/self/sites` was read with `meta.rc` `ok` and listed at least one site |
+| Site, Wireless Summary | `/self/sites` was read with `meta.rc` `ok`, listed at least one site, and every site row carried a `name` |
 | Gateway, Switch, Access Point | every site's device list was read (no failed or cooling-down site, `meta.rc` `ok`), at least one device record came back across all sites, no gateway, switch or access point came without a MAC, and no device record came without a `type` |
 | WAN Interface, Switch Port, Radio | as their device, and every gateway (WAN), switch (port) or access point (radio) is informing the controller; every gateway's record carries `wan1`, and every switch and access point sent a non-empty port or radio table with an index or radio code on every row |
 | NVR, Camera | the Protect bootstrap was read and carried an NVR; the NVR also needs its MAC, cameras need a non-empty camera list with every camera's MAC |
@@ -567,6 +567,9 @@ and count nothing:
   access point a radio);
 - a listed gateway whose record has no `wan1`: no WAN (every gateway has
   a WAN 1; a missing `wan2` is a real configuration and is not guarded).
+- a site row with no `name`: the row is skipped (no Site with an empty
+  key), and no site, Wireless Summary, gateway, switch, access point, WAN,
+  port or radio is counted that cycle.
 
 The cost: **the last site, the last device on the controller, the last
 camera under an NVR, and the last port, radio or WAN 1 of a listed device

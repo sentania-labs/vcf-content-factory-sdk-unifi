@@ -44,6 +44,7 @@ public final class ReadKindsTest {
 		oneEmptySiteAmongOthersIsRead();
 		gatewayWithoutWan1KeepsWans();
 		siteListRcNotOkNamesNothing();
+		siteWithoutNameLeavesSiteOut();
 		leftOutMatchesKinds();
 		worldIsExcluded();
 		informingStates();
@@ -491,5 +492,30 @@ public final class ReadKindsTest {
 		ReadKinds f = new ReadKinds();
 		f.sitesRead(0, true);
 		T.eq(set("sites"), f.leftOut().keySet(), "empty site list");
+		ReadKinds g = complete();
+		g.siteWithoutIdentity();
+		T.eq(set("site-identity"), g.leftOut().keySet(), "nameless site");
+	}
+
+	/**
+	 * Review R4-N1: a /self/sites row with no name is skipped, and leaves
+	 * Site, Wireless Summary and the device kinds out (its devices were not
+	 * read); Protect is unaffected. Alongside a fully read named site, too.
+	 */
+	static void siteWithoutNameLeavesSiteOut() {
+		ReadKinds r = complete();
+		r.siteWithoutIdentity();
+		T.eq(set(ReadKinds.NVR, ReadKinds.CAMERA), r.kinds(),
+				"nameless site: only Protect kinds read");
+		ReadKinds two = new ReadKinds();
+		two.sitesRead(2, true);
+		two.site(false, true, true, 3);
+		two.siteWithoutIdentity();
+		Set<String> k = two.kinds();
+		T.check(!k.contains(ReadKinds.SITE), "Site left out");
+		T.check(!k.contains(ReadKinds.AGGREGATE), "Wireless Summary left out");
+		for (String kind : NETWORK) {
+			T.check(!k.contains(kind), kind + " left out with a nameless site");
+		}
 	}
 }

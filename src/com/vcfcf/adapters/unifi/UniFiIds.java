@@ -107,4 +107,17 @@ final class UniFiIds {
 		if (raw == null) return "";
 		return URLEncoder.encode(raw, StandardCharsets.UTF_8).replace("+", "%20");
 	}
+
+	/**
+	 * Build 18 (issue #27, item 4): the display name of a generic
+	 * per-parent object, {@code "<label> (<parent>)"}, the form Broadcom's
+	 * own adapters use ("Storage Pool (esx01...)"), so "Port 3" or "WAN 1"
+	 * can be told apart in search, lists and alerts. {@code label} alone
+	 * when the parent name is missing or blank. A display name only: the
+	 * resource's identifier, and so its identity and history, is unchanged.
+	 */
+	static String childName(String label, String parentName) {
+		if (parentName == null || parentName.trim().isEmpty()) return label;
+		return label + " (" + parentName.trim() + ")";
+	}
 }

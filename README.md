@@ -1,6 +1,6 @@
 # VCF Content Factory UniFi Controller
 
-Monitors UniFi infrastructure via the classic Network API and Protect API. Discovers sites, gateways, switches, access points, NVR, and cameras. Per-switch-port and per-AP-radio child objects with PoE tracking. Switch ports are linked to the ESXi hosts cabled to them from the vCenter side: each host's vmnic LLDP neighbour (published by vCenter) is matched to the UniFi switch and port, read over the VCF Operations Suite API on the collector (optional; skipped where the collector has no local Suite API access). Replaces the Tier 1 UniFi Network and UniFi Network Integration management packs.
+Monitors UniFi infrastructure on a **UniFi OS console** (for example UDM, UDM Pro, UDR, Cloud Gateway or Cloud Key Gen2 Plus) through its Network application and Protect APIs. Classic and self-hosted UniFi Network controllers are not supported. Discovers sites, gateways, switches, access points, NVR, and cameras. Per-switch-port and per-AP-radio child objects with PoE tracking. Switch ports are linked to the ESXi hosts cabled to them from the vCenter side: each host's vmnic LLDP neighbour (published by vCenter) is matched to the UniFi switch and port, read over the VCF Operations Suite API on the collector (optional; skipped where the collector has no local Suite API access). Replaces the Tier 1 UniFi Network and UniFi Network Integration management packs.
 
 ## Documentation
 
@@ -17,9 +17,9 @@ must be on for each install or upgrade of an unsigned pak:
 2. Administrator Settings, Security Settings: click **Activate Unsigned PAK
    Installation** on 9.1 (**Enable Unsigned PAK Installation** on 9.0). The
    change is refused while any cluster node is down.
-3. When uploading the pak (**Administration > Integrations > Repository >
-   Add**), tick **Ignore the PAK file signature checking**. The box only
-   appears once the setting is on.
+3. When uploading the pak (**Repository** tab of Integrations, see
+   Installation below), tick **Ignore the PAK file signature checking**. The
+   box only appears once the setting is on.
 
 With the setting off, the install fails with
 `unsigned_pak_installation.not.allowed`. This is a cluster-wide security
@@ -28,13 +28,88 @@ it deliberately and consider turning it off again after installing. If you do,
 it has to go back on before you install the next build. Upgraded appliances
 keep whatever state the setting had before the upgrade.
 
+## Supported configuration
+
+- **UniFi OS consoles only**: the console's own login (`/api/auth/login`)
+  and its Network application (`/proxy/network`), plus Protect when it is
+  installed. Classic and self-hosted UniFi Network controllers (the Network
+  Application on its own server, usually on port 8443) are not supported;
+  Test Connection fails with "This adapter supports UniFi OS consoles only"
+  when the host answers 404 on either path.
+
 ## Installation
 
-Upload the `.pak` file via **Administration > Integrations > Repository > Add** in VCF Operations (9.x; on 8.x, **Data Sources > Integrations > Repository**).
+Install the pak from the **Repository** tab and create the adapter instance
+under the **Accounts** tab, both under Integrations (paths checked
+2026-10-28; no supported release has a Data Sources menu item):
+
+| VCF Operations | Integrations is at | Then |
+|---|---|---|
+| 9.1.1 | **Operate** tab > **Administration** > **Integrations** | **Accounts** tab (opens by default) or **Repository** tab |
+| 9.0.2, 8.18.7 | **Administration** > **Integrations** | **Accounts** or **Repository** |
+
+Upload the `.pak` file under **Repository > Add**.
+
+## Upgrading to build 18
+
+On its first collection cycle after the upgrade, build 18 (1.1.0.18) renames
+every existing switch port, WAN interface, radio and Wireless Summary to
+`<label> (<parent>)`, for example `Port 3 (<switch>)`, `WAN 1 (<gateway>)`,
+`5 GHz (<access point>)` and `Wireless Summary (<site>)`. The objects keep
+their identity and their metric history; only the name changes. Anything
+keyed on the old names stops matching and needs updating: saved searches,
+custom groups and views filtered by name, and notification rules. Later
+renames on the controller carry over the same way. Devices are renamed too
+when their name on the controller changed after VCF Operations first
+discovered them: on devel the gateway first seen as "udm" became "Bentwood"
+on the first build 18 cycle. Filters, groups and rules keyed on device names
+need the same check. Details: REFERENCE.md, Object names.
+
+**Build 18 also deletes objects the controller no longer lists, and the
+first upgrade deletes every leftover at once (issue #20).** An object
+missing from 12 consecutive complete collection cycles (an hour at the
+default 5-minute interval) is marked Not Existing, and VCF Operations
+deletes it, with its metric history, alerts and group membership, after the
+Deleted Objects retention (Global Settings; 168 hours by default, 6 hours on
+some labs). Counting starts on the first build 18 cycle and covers every
+object the pack registered in the past under a key it no longer produces,
+so about an hour after the upgrade these are marked, and deleted at the end
+of the retention window. This cannot be undone. On devel that includes:
+
+- switch ports registered as `<mac>_0` by builds before 15 (issue #23);
+- a camera removed from Protect (the second "Backyard" camera, which still
+  reads Disconnected) and anything else Protect no longer lists;
+- a gateway the controller no longer lists, with its WAN interfaces;
+- a device an earlier build registered while it was pending adoption, and
+  any radio registered as `<mac>_` before build 15.
+
+Removal follows what the controller lists, so a configuration or
+permission change counts too: narrowing the account's site access removes
+those sites and their devices (the pack logs a WARN naming a site the
+first cycle it is missing), and a radio the controller stops reporting is
+removed. An object that comes back returns as a new object with no history.
+
+Only these empty answers count nothing, so the objects they cover are
+never removed automatically and the last one goes by hand: an empty site
+list (no kind at all); no device on any site (no gateway, switch, access
+point, WAN, port or radio); an empty camera list while the NVR is listed;
+an empty or missing port table on a listed switch, radio table on a listed
+access point, or `wan1` on a listed gateway. A site row with no `name`
+is skipped and counts nothing for sites or devices that cycle; it is not
+read, not the NVR's parent, and raises no "no longer listed" WARN. Everything else is removed
+when it stops being listed, the last of its type included: remove the only
+switch while a gateway or access point is still listed and that switch and
+its ports are removed; remove a gateway and its WANs go with it; a site
+whose devices are all gone loses them while another site still lists
+devices. While a kind's removal is off, the pack logs why once at INFO.
+
+Before upgrading, list the pack's objects (Inventory, filter by adapter
+type UniFi Controller) and export anything whose history you want to keep.
+Details: REFERENCE.md, Removed objects.
 
 ## Configuration
 
-Create an adapter instance under **Administration > Integrations > Accounts > Add Account** (9.x; on 8.x, **Data Sources > Integrations > Accounts**) and provide:
+Create an adapter instance under **Accounts > Add Account** (Integrations, as above) and provide:
 
 | Field | Description | Default |
 |---|---|---|

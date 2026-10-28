@@ -4,10 +4,15 @@
 
 - **Allow Unsigned PAK Installation** on for every install or upgrade of this unsigned pak on VCF Operations 9.0 and 9.1 (8.x is unverified); see [Installing: allow unsigned paks first](../README.md#installing-allow-unsigned-paks-first).
 - VCF Operations 8.x or 9.x (collect-path discovery is validated on
-  9.0.2).
-- A UniFi controller — a UniFi OS console (e.g. UDM / UDM-Pro / Cloud Key)
-  or a self-hosted Network controller — reachable from the VCF Operations
-  collector on **TCP 443** (HTTPS).
+  9.0.2 and 9.1.1).
+- A **UniFi OS console** (for example UDM, UDM Pro, UDR, Cloud Gateway or
+  Cloud Key Gen2 Plus) running the Network application, reachable from the
+  VCF Operations collector on **TCP 443** (HTTPS). This is the only
+  supported configuration: classic and self-hosted UniFi Network
+  controllers (the Network Application installed on its own server,
+  usually on port 8443) are not supported. The adapter logs in at the
+  console's `/api/auth/login` and reads the Network application under
+  `/proxy/network`; a classic controller has neither.
 - A **dedicated local UniFi account** with the **View Only** role (see
   Account below; View Only is to be confirmed on devel), with access to
   the **Network API** (and the **Protect API**, if you want NVR / camera
@@ -135,10 +140,17 @@ for:
 
 ## Step-by-Step Installation
 
-1. Install the `.pak` file via **Administration > Integrations > Repository
-   > Add** (9.x; on 8.x, **Data Sources > Integrations > Repository**).
-2. After installation, navigate to **Administration > Integrations >
-   Accounts** (9.x; on 8.x, **Data Sources > Integrations > Accounts**).
+Integrations has two tabs: **Repository** installs paks, **Accounts**
+holds adapter instances. Where Integrations is (checked 2026-10-28; no
+supported release has a Data Sources menu item):
+
+| VCF Operations | Integrations is at |
+|---|---|
+| 9.1.1 | **Operate** tab > **Administration** > **Integrations** (opens on the **Accounts** tab) |
+| 9.0.2, 8.18.7 | **Administration** > **Integrations** |
+
+1. Install the `.pak` file: Integrations > **Repository** tab > **Add**.
+2. After installation, open Integrations > **Accounts** tab.
 3. Click **Add Account** and select **VCF Content Factory UniFi Controller**.
 4. Fill in the configuration fields above (host, port `443`, controller
    credentials; leave `allowInsecure` at `false`).
@@ -150,6 +162,13 @@ for:
 
 ## Troubleshooting
 
+- **Test Connection fails with "This adapter supports UniFi OS consoles
+  only"**: the host answered HTTP 404 on the UniFi OS login
+  (`/api/auth/login`) or on the Network application (`/proxy/network`).
+  It is a classic or self-hosted Network controller, or a console without
+  the Network application. Point the adapter at a UniFi OS console on port
+  443. A classic controller that answers the login with another status
+  shows that status instead (no classic controller was available to check).
 - **Test Connection fails on TLS**: the controller certificate is
   untrusted and was not accepted (see TLS above). Click **Validate
   Connection** again and accept the certificate in the review dialog. Set

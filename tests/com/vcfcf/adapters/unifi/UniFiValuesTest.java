@@ -16,6 +16,8 @@ public final class UniFiValuesTest {
 		poeBudgetUsedPct();
 		flagAbsentIsNotFalse();
 		recordingModeText();
+		nvrStorage();
+		nvrStorageUsedOverTotal();
 		System.out.println("UniFiValuesTest: all assertions passed");
 	}
 
@@ -178,5 +180,56 @@ public final class UniFiValuesTest {
 		T.eq(null, UniFiValues.text(null), "absent");
 		T.eq(null, UniFiValues.text(""), "empty");
 		T.eq(null, UniFiValues.text("   "), "blank");
+	}
+
+	/**
+	 * Build 18 (issue #39): numbers from the devel UDM Pro's Protect
+	 * bootstrap, 2026-10-28 (Protect 7.3.70). systemInfo.storage: size
+	 * 9912161972224, used 9822262308864 (available 89899663360; the three
+	 * add up, and the console's primary space reports the same total as
+	 * total_bytes, so bytes). storageStats.recordingSpace: total
+	 * 9877802233856, used 9839457505280.
+	 */
+	static void nvrStorage() {
+		UniFiValues.NvrStorage v = UniFiValues.nvrStorage(9912161972224.0, 9822262308864.0,
+				9877802233856.0, 9839457505280.0);
+		T.eq(9912161972224.0, v.total, "volume total first");
+		T.eq(9822262308864.0, v.used, "volume used first");
+		T.eq("systemInfo", v.source, "volume source named");
+		T.check(Math.abs(v.used / v.total * 100.0 - 99.093) < 0.001, "usage 99.09 %");
+		UniFiValues.NvrStorage r = UniFiValues.nvrStorage(null, null,
+				9877802233856.0, 9839457505280.0);
+		T.eq(9877802233856.0, r.total, "recording space when no volume pair");
+		T.eq(9839457505280.0, r.used, "recording used");
+		T.eq("recordingSpace", r.source, "recording source named");
+		UniFiValues.NvrStorage mixed = UniFiValues.nvrStorage(9912161972224.0, null,
+				null, 9839457505280.0);
+		T.eq(null, mixed, "a total and a used from different sources are never combined");
+		UniFiValues.NvrStorage half = UniFiValues.nvrStorage(9912161972224.0, null,
+				9877802233856.0, 9839457505280.0);
+		T.eq(9877802233856.0, half.total, "half a volume pair falls back whole");
+		T.eq("recordingSpace", half.source, "and says so");
+		T.eq(null, UniFiValues.nvrStorage(null, null, null, null), "nothing sent");
+		T.eq(null, UniFiValues.nvrStorage(0.0, 0.0, null, null), "total 0 is unusable");
+		T.eq(null, UniFiValues.nvrStorage(100.0, -1.0, null, null), "negative used");
+		T.eq(0.0, UniFiValues.nvrStorage(100.0, 0.0, null, null).used, "empty disk is a real 0");
+		T.eq(100.0, UniFiValues.nvrStorage(100.0, 100.0, null, null).used, "a full disk is usable");
+	}
+
+	/** Review N3: used above total is rejected, never a usage over 100 %. */
+	static void nvrStorageUsedOverTotal() {
+		T.eq(null, UniFiValues.nvrStorage(100.0, 101.0, null, null),
+				"used above total publishes neither");
+		UniFiValues.NvrStorage fb = UniFiValues.nvrStorage(100.0, 101.0, 80.0, 40.0);
+		T.eq("recordingSpace", fb.source, "a rejected volume pair falls back whole");
+		T.eq(80.0, fb.total, "recording total, not the volume's");
+		T.eq(40.0, fb.used, "recording used, not the volume's");
+		T.eq(null, UniFiValues.nvrStorage(null, null, 80.0, 81.0),
+				"a rejected recording pair publishes neither");
+		T.check(UniFiValues.usedExceedsTotal(100.0, 101.0), "flagged for the log");
+		T.check(!UniFiValues.usedExceedsTotal(100.0, 100.0), "full is not flagged");
+		T.check(!UniFiValues.usedExceedsTotal(null, 101.0), "missing total is not flagged");
+		T.check(!UniFiValues.usedExceedsTotal(100.0, null), "missing used is not flagged");
+		T.check(!UniFiValues.usedExceedsTotal(0.0, 1.0), "total 0 is unusable, not flagged");
 	}
 }

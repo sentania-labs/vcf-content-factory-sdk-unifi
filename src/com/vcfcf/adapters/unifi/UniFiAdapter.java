@@ -135,6 +135,46 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 	private volatile UniFiStitcher stitcher;
 
 	/**
+	 * Build 18 (issue #15): the uplink fallbacks already logged ({@code
+	 * site|mac|reason}), so a device placed under its Site because of an
+	 * uplink loop, an unknown uplink or a nesting the tree cannot show is
+	 * logged once at INFO, not every cycle. Bounded by the device count.
+	 */
+	private final Set<String> loggedUplinkFallbacks =
+			java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+	/**
+	 * Build 18 (#27 item 4; review N2, N3): renameIfChanged and a rejected
+	 * NVR storage pair warn once per streak of failing cycles, not per
+	 * resource and not once per instance lifetime. Re-armed by
+	 * {@link #onCycleStart()}.
+	 */
+	private final StreakLog streakLog = new StreakLog();
+	private static final String RENAME_STREAK = "rename";
+
+	/**
+	 * Issue #20: the kinds the last finished enumeration read in full
+	 * ({@link ReadKinds}) and its thread, or null while one runs or after one
+	 * threw. Volatile: a discovery pass may run on another thread.
+	 */
+	private volatile ReadRecord lastRead;
+
+	/**
+	 * Issue #20, second half: whether a cycle without Protect leaves the
+	 * NVR's site out of the relationships ({@link ProtectEdgeHold}).
+	 */
+	private final ProtectEdgeHold protectEdgeHold = new ProtectEdgeHold();
+
+	/**
+	 * Build 18 review N2: closes the streak of any warning that did not
+	 * recur in the cycle just ended, so a later failure warns again.
+	 */
+	@Override
+	protected void onCycleStart() {
+		streakLog.cycleStart();
+	}
+
+	/**
 	 * Per-cycle snapshot of the UniFi API responses, shared across all
 	 * per-resource {@code collect()} calls within one collection cycle, lives in
 	 * the {@link SnapshotCache} of the current {@link Configured} holder.
@@ -208,6 +248,9 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		final RefreshCache<List<UniFiStitcher.ForeignHost>> vmnicHosts =
 				new RefreshCache<>(System::currentTimeMillis, SLOW_REFRESH_MS,
 						SLOW_MAX_STALE_MS);
+		// Build 18 review R3-N3: the last read site list, so a site that
+		// drops out is named once at WARN.
+		final SiteListWatch siteWatch = new SiteListWatch();
 
 		Configured(UniFiApiClient api, HttpClients clients, Logger apiLog,
 				Logger snapshotLog, Logger inventoryLog,
@@ -434,7 +477,16 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 			try {
 				UniFiApiClient testApi = new UniFiApiClient(testHttp.main,
 						apiLog);
-				SimpleJson sites = testApi.listSites();
+				SimpleJson sites;
+				try {
+					sites = testApi.listSites();
+				} catch (Exception e) {
+					// Build 18 (issue #17): a 404 on the login or the
+					// Network path names the requirement.
+					String unifiOs = UniFiFailures.unifiOsRequired(e);
+					if (unifiOs != null) throw new IOException(unifiOs, e);
+					throw e;
+				}
 				SimpleJson data = sites.get("data");
 				if (data.isNull() || !data.isList()) {
 					throw new IOException("UniFi /self/sites returned a 200 payload "
@@ -513,6 +565,39 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 	}
 
 	/**
+	 * Issue #20 (buildkit 1.0.22): the kinds this cycle's enumeration read
+	 * in full, so the framework counts a miss (and after
+	 * {@code notExistingMissedCycles()}, 12 by default, marks NOT_EXISTING)
+	 * only for those. The rule is {@link ReadKinds}: no device kind when any
+	 * site's {@code stat/device} failed, no NVR or camera when the Protect
+	 * bootstrap failed.
+	 */
+	@Override
+	protected Set<String> kindsReadThisCycle() {
+		ReadRecord r = lastRead;
+		// Only this thread's enumeration speaks for this cycle: a discovery
+		// pass on another thread (getDiscoverer) never stands in for it.
+		return r != null && r.thread == Thread.currentThread() ? r.kinds : null;
+	}
+
+	/** Issue #20: UniFi World is never marked (it is always delivered). */
+	@Override
+	protected Set<String> notExistingExcludedKinds() {
+		return ReadKinds.EXCLUDED;
+	}
+
+	/** Issue #20: one enumeration's read kinds and the thread that ran it. */
+	private static final class ReadRecord {
+		final Thread thread;
+		final Set<String> kinds;
+
+		ReadRecord(Thread thread, Set<String> kinds) {
+			this.thread = thread;
+			this.kinds = kinds;
+		}
+	}
+
+	/**
 	 * The single, shared resource-tree enumeration. Walks the per-cycle UniFi
 	 * snapshot and emits one {@link ResourceConfig} per resource to {@code sink}.
 	 *
@@ -535,75 +620,142 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 	@Override
 	protected void enumerateResources(ResourceSink sink)
 			throws InterruptedException, Exception {
+		// Issue #20: nothing is declared read until this enumeration has
+		// finished; a throw leaves null (the framework marks nothing).
+		lastRead = null;
+		ReadKinds read = new ReadKinds();
+		// Build 18 (#27 item 4): every resource is looked up by key first,
+		// so the SDK records a changed name (renameIfChanged).
+		ResourceSink out = rc -> {
+			renameIfChanged(rc);
+			sink.accept(rc);
+		};
 		Snapshot s = currentSnapshot();
-		sink.accept(rcOf("UniFiWorld", "UniFi World", "world_id", "unifi_world"));
+		out.accept(rcOf("UniFiWorld", "UniFi World", "world_id", "unifi_world"));
+		// Snapshot.build throws without a site list; an empty one declares
+		// nothing (review R2-B1: World is always delivered, so the
+		// framework's "delivered nothing" guard would not catch it), nor
+		// does one whose meta.rc is not ok (review R3-N1).
+		read.sitesRead(s.sites.get("data").asList().size(),
+				ReadKinds.rcOk(s.sites.get("meta").get("rc").asString("")));
+		Map<String, String> listedSites = new LinkedHashMap<>();
 
 		int sites = 0, gateways = 0, switches = 0, ports = 0, aps = 0,
 				radios = 0, wans = 0, aggregates = 0, cameras = 0, nvrs = 0;
 
 		for (SimpleJson site : s.sites.get("data").asList()) {
 			String siteName = site.get("name").asString();
+			// Review R4-N1: no name, no identity; the row is not a Site with
+			// a null key, and Site, Wireless Summary and the device kinds
+			// are left out this cycle.
+			if (siteName == null || siteName.trim().isEmpty()) {
+				read.siteWithoutIdentity();
+				continue;
+			}
 			String siteDesc = site.get("desc").asString(siteName);
-			sink.accept(rcOf("UniFiSite", siteDesc, "site_name", siteName));
+			out.accept(rcOf("UniFiSite", siteDesc, "site_name", siteName));
 			sites++;
+			if (siteName != null) listedSites.put(siteName, siteDesc);
 
-			for (SimpleJson dev : s.devicesForSite(siteName).get("data").asList()) {
+			SimpleJson sitePayload = s.devicesForSite(siteName);
+			SimpleJson siteDevices = sitePayload.get("data");
+			// Review R3-B1: every record counts toward "the controller
+			// listed a device", registered or not; zero on every site
+			// declares no device kind.
+			read.site(s.failedSites.containsKey(siteName),
+					s.devicesBySite.containsKey(siteName) && siteDevices.isList(),
+					ReadKinds.rcOk(sitePayload.get("meta").get("rc").asString("")),
+					siteDevices.isList() ? siteDevices.asList().size() : 0);
+			for (SimpleJson dev : siteDevices.asList()) {
 				String type = dev.get("type").asString("");
+				// Review R2-N2: a record with no type could have been a
+				// gateway, switch or AP; like a MAC-less one, no device
+				// kind is complete this cycle.
+				if (type.trim().isEmpty()) read.deviceWithoutIdentity();
 				// Build 15 (issue #23): no MAC, no identity; skipped here,
 				// in buildRelationships and in the snapshot index alike
 				// (Snapshot.build logs it at DEBUG).
 				String mac = deviceMac(dev);
-				if (mac == null) continue;
+				if (mac == null) {
+					if (isGateway(type) || "usw".equals(type) || "uap".equals(type)) {
+						read.deviceWithoutIdentity(); // #20: unknown which one
+					}
+					continue;
+				}
 				// Codex P2: a device pending adoption is not registered (the
 				// same rule as the site's Device Count; isDiscovered).
 				if (!isDiscovered(dev)) continue;
 				String name = deviceDisplayName(dev);
 
 				if (isGateway(type)) {
-					sink.accept(rcOf("UniFiGateway", name, "mac", mac));
+					out.accept(rcOf("UniFiGateway", name, "mac", mac));
 					gateways++;
+					// Review R3-W1: every gateway has a WAN 1; a record
+					// without one is incomplete (an absent wan2 is not).
+					read.gateway(ReadKinds.informing(dev.get("state").asString()),
+							!dev.get("wan1").isNull());
 					if (!dev.get("wan1").isNull()) {
-						sink.accept(rcOf("UniFiWanInterface", "WAN 1",
+						out.accept(rcOf("UniFiWanInterface",
+								UniFiIds.childName("WAN 1", name),
 								"wan_name", mac + "_wan1"));
 						wans++;
 					}
 					if (!dev.get("wan2").isNull()) {
-						sink.accept(rcOf("UniFiWanInterface", "WAN 2",
+						out.accept(rcOf("UniFiWanInterface",
+								UniFiIds.childName("WAN 2", name),
 								"wan_name", mac + "_wan2"));
 						wans++;
 					}
 				} else if ("usw".equals(type)) {
-					sink.accept(rcOf("UniFiSwitch", name, "mac", mac));
+					out.accept(rcOf("UniFiSwitch", name, "mac", mac));
 					switches++;
 					SimpleJson portTable = dev.get("port_table");
+					int portsNoIndex = 0;
 					if (!portTable.isNull()) {
 						for (SimpleJson port : portTable.asList()) {
 							Integer idx = portIdx(port);
-							if (idx == null) continue; // #23: never <mac>_0
-							sink.accept(rcOf("UniFiSwitchPort",
-									portDisplayName(port, idx),
+							if (idx == null) { // #23: never <mac>_0
+								portsNoIndex++;
+								continue;
+							}
+							out.accept(rcOf("UniFiSwitchPort",
+									UniFiIds.childName(portDisplayName(port, idx), name),
 									"port_key", mac + "_" + idx));
 							ports++;
 						}
 					}
+					read.switchPorts(ReadKinds.informing(dev.get("state").asString()),
+							portTable.isList(),
+							portTable.isList() ? portTable.asList().size() : 0,
+							portsNoIndex);
 				} else if ("uap".equals(type)) {
-					sink.accept(rcOf("UniFiAccessPoint", name, "mac", mac));
+					out.accept(rcOf("UniFiAccessPoint", name, "mac", mac));
 					aps++;
 					SimpleJson radioStats = dev.get("radio_table_stats");
+					int radiosNoCode = 0;
 					if (!radioStats.isNull()) {
 						for (SimpleJson radio : radioStats.asList()) {
 							String radioCode = radioCode(radio);
-							if (radioCode == null) continue; // peer review 7
-							sink.accept(rcOf("UniFiRadio",
-									radioDisplayName(radioCode),
+							if (radioCode == null) { // peer review 7
+								radiosNoCode++;
+								continue;
+							}
+							out.accept(rcOf("UniFiRadio",
+									UniFiIds.childName(radioDisplayName(radioCode), name),
 									"radio_key", mac + "_" + radioCode));
 							radios++;
 						}
 					}
+					read.accessPointRadios(
+							ReadKinds.informing(dev.get("state").asString()),
+							radioStats.isList(),
+							radioStats.isList() ? radioStats.asList().size() : 0,
+							radiosNoCode);
 				}
 			}
 
-			sink.accept(rcOf("UniFiWirelessAggregate", "Wireless Summary",
+			out.accept(rcOf("UniFiWirelessAggregate",
+					UniFiIds.childName("Wireless Summary", siteDesc),
 					"aggregate_id", siteName + "_wlan_aggregate"));
 			aggregates++;
 		}
@@ -616,21 +768,29 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 				// not registered; its cameras still are (their own MAC).
 				String nvrMac = UniFiIds.mac(nvr.get("mac").asString());
 				if (nvrMac != null) {
-					sink.accept(rcOf("UniFiNvr", nvr.get("name").asString("NVR"),
+					out.accept(rcOf("UniFiNvr", nvr.get("name").asString("NVR"),
 							"nvr_mac", nvrMac));
 					nvrs++;
 				}
 				SimpleJson cams = s.protect.get("cameras");
+				int camerasNoMac = 0;
 				if (!cams.isNull()) {
 					for (SimpleJson cam : cams.asList()) {
 						String camMac = UniFiIds.mac(cam.get("mac").asString());
-						if (camMac == null) continue; // #23
-						sink.accept(rcOf("UniFiCamera",
+						if (camMac == null) { // #23
+							camerasNoMac++;
+							continue;
+						}
+						out.accept(rcOf("UniFiCamera",
 								cam.get("name").asString(camMac),
 								"camera_mac", camMac));
 						cameras++;
 					}
 				}
+				// Issue #20: Protect kinds are read only on a bootstrap
+				// that arrived with an NVR (s.protect is null otherwise).
+				read.protect(nvrMac != null, cams.isList(),
+						cams.isList() ? cams.asList().size() : 0, camerasNoMac);
 			}
 		}
 
@@ -639,6 +799,85 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 				+ " switches, " + ports + " ports, " + aps + " aps, "
 				+ radios + " radios, " + aggregates + " aggregates, "
 				+ nvrs + " nvr, " + cameras + " cameras");
+		logVanishedReadGaps(read, listedSites);
+		lastRead = new ReadRecord(Thread.currentThread(), read.kinds());
+	}
+
+	/**
+	 * Build 18 review R3-N2, R3-N3: says why a kind's removal is off
+	 * (INFO, once per streak per reason, so a persistent gap such as a
+	 * typeless record or a switch stuck with an empty port table is never
+	 * silent), and names a site that dropped out of a fully read site list
+	 * (WARN, once when it goes missing): its objects start counting toward
+	 * NOT_EXISTING.
+	 */
+	private void logVanishedReadGaps(ReadKinds read,
+			Map<String, String> listedSites) {
+		for (Map.Entry<String, String> e : read.leftOut().entrySet()) {
+			if (streakLog.fail("not-read|" + e.getKey())) {
+				logInfo("Removal of vanished objects is off for " + e.getValue()
+						+ ". Objects of the kinds named take no miss and are "
+						+ "not marked Not Existing; logged once until a cycle "
+						+ "without this reason.");
+			}
+		}
+		Configured c = this.configured;
+		// Review R5-N2: a cycle with a nameless row does not update the
+		// watch; that row may be a known site, and its objects take no miss
+		// while site-identity holds, so a "no longer listed" WARN would
+		// overstate what happens.
+		if (c == null || !read.siteListRead() || read.siteWithoutIdentitySeen()) return;
+		for (Map.Entry<String, String> gone : c.siteWatch.update(listedSites).entrySet()) {
+			logWarn("UniFi site '" + gone.getValue() + "' (" + gone.getKey()
+					+ ") is no longer in the controller's site list (deleted, "
+					+ "or the account's site access was narrowed). If it stays "
+					+ "out for 12 consecutive cycles, the site, its Wireless "
+					+ "Summary and every device, port, radio and WAN under it "
+					+ "are marked Not Existing, "
+					+ "and deleted with their history after the Deleted "
+					+ "Objects retention. Restore the site or the access "
+					+ "before then to keep them.");
+		}
+	}
+
+	/**
+	 * Build 18 (#27 item 4): a known object takes the name the adapter now
+	 * reports, as Broadcom's own adapters do. javap of the devel appliance's
+	 * plugins, 2026-10-28: vSphere {@code VMwareAdapter} and vSAN {@code
+	 * VsanStorageAdapter} return {@code true} here; NSX-T {@code
+	 * NSXTAdapter} and the vim {@code ManagementAdapter} return {@code true}
+	 * per resource for their own adapter kinds. The SDK default is {@code
+	 * false}: VCF Operations then keeps the first name forever. With it on,
+	 * the parent-qualified names reach objects that existed before build
+	 * 18, and a device or site renamed on the controller is renamed in VCF
+	 * Operations. Identity is untouched: the SDK only carries a new name, and
+	 * new values for non-unique identifiers, which this pack does not have.
+	 */
+	@Override
+	public boolean isResourceRenameAllowed() {
+		return true;
+	}
+
+	/**
+	 * Build 18 (#27 item 4): the SDK compares a resource's reported name with
+	 * the stored one only inside {@code getMonitoringResource(ResourceKey)},
+	 * and sends the new name with the cycle's result
+	 * ({@code finalizeCollectResult}). The framework registers resources with
+	 * {@code CollectResult.addNewResource}, which never makes that
+	 * comparison, so each enumerated key is looked up here. A new resource
+	 * (not yet in the cache) is a no-op; a failed lookup costs only the
+	 * rename, logged once.
+	 */
+	private void renameIfChanged(ResourceConfig rc) {
+		try {
+			getMonitoringResource(rc.getResourceKey());
+		} catch (RuntimeException e) {
+			if (streakLog.fail(RENAME_STREAK)) {
+				logWarn("Resource rename lookup failed (names may stay as "
+						+ "first discovered; collection unaffected; logged once "
+						+ "until a cycle without the failure): " + e);
+			}
+		}
 	}
 
 	private ResourceConfig rcOf(String kind, String name, String idKey, String idValue) {
@@ -1302,6 +1541,22 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		}
 	}
 
+	/**
+	 * Build 18 review N3: an NVR storage pair reporting more used than total
+	 * is rejected by {@link UniFiValues#nvrStorage}; say so once per streak,
+	 * per NVR and source.
+	 */
+	private void warnUsedOverTotal(String nvrMac, String source,
+			Double total, Double used) {
+		if (UniFiValues.usedExceedsTotal(total, used)
+				&& streakLog.fail("nvr-storage|" + nvrMac + "|" + source)) {
+			logWarn("collect: NVR " + nvrMac + " storage " + source
+					+ " reports used " + used.longValue() + " above total "
+					+ total.longValue() + " bytes; that pair is not published "
+					+ "(logged once until a cycle without it)");
+		}
+	}
+
 	private void collectNvr(ResourceConfig rc, Snapshot s, List<MetricData> out) {
 		if (s.protect == null) {
 			logWarn("collect: NVR resource present but Protect data absent from snapshot");
@@ -1322,13 +1577,30 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 					(System.currentTimeMillis() / 1000.0) - (upSince / 1000.0));
 		}
 
-		SimpleJson storage = nvr.get("storageInfo");
-		Double total = UniFiValues.number(storage.get("totalSize").asString());
-		Double used = UniFiValues.number(storage.get("usedSize").asString());
-		metricIfPresent(out, "Storage|total_bytes", total);
-		metricIfPresent(out, "Storage|used_bytes", used);
-		if (total != null && used != null && total > 0) {
-			metric(out, "Storage|usage_pct", (used / total) * 100.0);
+		// Build 18 (issue #39): Protect has no storageInfo (the build 15
+		// read never matched); the volume is systemInfo.storage, Protect's
+		// recording share storageStats.recordingSpace, both in bytes. One
+		// source per cycle, never a total from one and a used from the
+		// other; nothing when neither has a usable pair. Review N3: a pair
+		// with used above total is rejected and logged once per streak, and
+		// Storage|source says which pair fed the cycle's numbers.
+		SimpleJson volume = nvr.get("systemInfo").get("storage");
+		SimpleJson recording = nvr.get("storageStats").get("recordingSpace");
+		Double volumeSize = UniFiValues.number(volume.get("size").asString());
+		Double volumeUsed = UniFiValues.number(volume.get("used").asString());
+		Double recordingTotal = UniFiValues.number(recording.get("total").asString());
+		Double recordingUsed = UniFiValues.number(recording.get("used").asString());
+		String nvrMac = UniFiIds.mac(nvr.get("mac").asString());
+		warnUsedOverTotal(nvrMac, UniFiValues.STORAGE_VOLUME, volumeSize, volumeUsed);
+		warnUsedOverTotal(nvrMac, UniFiValues.STORAGE_RECORDING,
+				recordingTotal, recordingUsed);
+		UniFiValues.NvrStorage storage = UniFiValues.nvrStorage(
+				volumeSize, volumeUsed, recordingTotal, recordingUsed);
+		if (storage != null) {
+			metric(out, "Storage|total_bytes", storage.total);
+			metric(out, "Storage|used_bytes", storage.used);
+			metric(out, "Storage|usage_pct", (storage.used / storage.total) * 100.0);
+			prop(out, "Storage|source", storage.source);
 		}
 
 		prop(out, "Configuration|model", nvr.get("modelKey").asString(""));
@@ -1407,11 +1679,22 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 	private Relationships buildRelationships(Snapshot s) {
 		RelationshipBuilder rb = new RelationshipBuilder(ADAPTER_KIND);
 
+		// Issue #20, second half: a cycle that did not read Protect does not
+		// publish the NVR's site (the first site), whose full child set would
+		// drop the Site > NVR edge until Protect is read again. See
+		// ProtectEdgeHold.
+		String nvrSite = s.sites.get("data").size() > 0
+				? s.sites.get("data").get(0).get("name").asString() : null;
+		if (!SiteIsolation.hasName(nvrSite)) nvrSite = null; // review R5-N1
+		boolean holdNvrSite = holdNvrSite(s, nvrSite);
+
 		ResourceKey world = rb.resource("UniFiWorld", "UniFi World",
 				"world_id", "unifi_world");
 
 		for (SimpleJson site : s.sites.get("data").asList()) {
 			String siteName = site.get("name").asString();
+			// Review R4-N1: a nameless row was not enumerated; no edges.
+			if (siteName == null || siteName.trim().isEmpty()) continue;
 			String siteDesc = site.get("desc").asString(siteName);
 			ResourceKey siteKey = rb.resource("UniFiSite", siteDesc,
 					"site_name", siteName);
@@ -1423,9 +1706,16 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 			if (!SiteIsolation.emitsChildren(s.failedSites, siteName)) {
 				continue;
 			}
+			// Issue #20: the same for the NVR's site on a cycle without
+			// Protect; its edges are kept as they are.
+			if (holdNvrSite && siteName != null && siteName.equals(nvrSite)) {
+				continue;
+			}
 
 			SimpleJson devices = s.devicesForSite(siteName);
 			Map<String, ResourceKey> deviceByMac = new HashMap<>();
+			// Build 18 (issue #15): the uplink graph, resolved below.
+			List<UplinkTree.Node> uplinkNodes = new ArrayList<>();
 
 			for (SimpleJson dev : devices.get("data").asList()) {
 				String type = dev.get("type").asString("");
@@ -1438,11 +1728,13 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 				if (isGateway(type)) {
 					devKey = rb.resource("UniFiGateway", name, "mac", mac);
 					if (!dev.get("wan1").isNull()) {
-						rb.parent(devKey, rb.resource("UniFiWanInterface", "WAN 1",
+						rb.parent(devKey, rb.resource("UniFiWanInterface",
+								UniFiIds.childName("WAN 1", name),
 								"wan_name", mac + "_wan1"));
 					}
 					if (!dev.get("wan2").isNull()) {
-						rb.parent(devKey, rb.resource("UniFiWanInterface", "WAN 2",
+						rb.parent(devKey, rb.resource("UniFiWanInterface",
+								UniFiIds.childName("WAN 2", name),
 								"wan_name", mac + "_wan2"));
 					}
 				} else if ("usw".equals(type)) {
@@ -1453,7 +1745,7 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 							Integer idx = portIdx(port);
 							if (idx == null) continue; // build 15, issue #23
 							rb.parent(devKey, rb.resource("UniFiSwitchPort",
-									portDisplayName(port, idx),
+									UniFiIds.childName(portDisplayName(port, idx), name),
 									"port_key", mac + "_" + idx));
 						}
 					}
@@ -1465,32 +1757,42 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 							String code = radioCode(radio);
 							if (code == null) continue; // peer review 7
 							rb.parent(devKey, rb.resource("UniFiRadio",
-									radioDisplayName(code), "radio_key", mac + "_" + code));
+									UniFiIds.childName(radioDisplayName(code), name),
+									"radio_key", mac + "_" + code));
 						}
 					}
 				} else {
 					continue;
 				}
 				deviceByMac.put(mac, devKey);
+				uplinkNodes.add(new UplinkTree.Node(mac, uplinkKind(type),
+						dev.get("uplink").get("uplink_mac").asString("")));
 			}
 
-			// Wire device topology by uplink_mac; no uplink → direct child of site.
-			for (SimpleJson dev : devices.get("data").asList()) {
-				String mac = deviceMac(dev);
-				if (mac == null) continue; // build 15, issue #23
-				ResourceKey devKey = deviceByMac.get(mac);
-				if (devKey == null) continue;
-				String uplinkMac = dev.get("uplink").get("uplink_mac").asString("");
-				ResourceKey parentKey = deviceByMac.get(uplinkMac);
-				if (parentKey != null && !uplinkMac.equals(mac)) {
-					rb.parent(parentKey, devKey);
-				} else {
-					rb.parent(siteKey, devKey);
+			// Build 18 (issue #15): each device under its uplink device when
+			// the pair fits the navigation tree (Gateway > Switch*, then
+			// Access Point*), else under the Site; an uplink loop, or an
+			// uplink to an unknown device, falls back to the Site and is
+			// logged once at INFO (UplinkTree).
+			UplinkTree.Result tree = UplinkTree.resolve(uplinkNodes);
+			for (UplinkTree.Node n : uplinkNodes) {
+				ResourceKey devKey = deviceByMac.get(n.mac);
+				String parentMac = tree.parent.get(n.mac);
+				ResourceKey parentKey = parentMac == null ? null
+						: deviceByMac.get(parentMac);
+				rb.parent(parentKey != null ? parentKey : siteKey, devKey);
+				UplinkTree.Reason why = tree.fallback.get(n.mac);
+				if (why != null && loggedUplinkFallbacks.add(
+						siteName + "|" + n.mac + "|" + why)) {
+					logInfo("Topology: device " + n.mac + " in site " + siteName
+							+ " is placed directly under the site because "
+							+ why.text + " (uplink " + n.uplinkMac + ")");
 				}
 			}
 
 			rb.parent(siteKey, rb.resource("UniFiWirelessAggregate",
-					"Wireless Summary", "aggregate_id", siteName + "_wlan_aggregate"));
+					UniFiIds.childName("Wireless Summary", siteDesc),
+					"aggregate_id", siteName + "_wlan_aggregate"));
 		}
 
 		// Protect: NVR → child of first site; cameras → child of NVR (v1 heuristic).
@@ -1499,9 +1801,12 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 			if (!nvr.isNull() && s.sites.get("data").size() > 0) {
 				SimpleJson firstSite = s.sites.get("data").get(0);
 				String siteName = firstSite.get("name").asString();
+				// Review R5-N1: a nameless first row has no Site key; the
+				// NVR keeps its stored site edge, as for an unread site.
+				boolean namedSite = SiteIsolation.hasName(siteName);
 				String siteDesc = firstSite.get("desc").asString(siteName);
-				ResourceKey siteKey = rb.resource("UniFiSite", siteDesc,
-						"site_name", siteName);
+				ResourceKey siteKey = namedSite ? rb.resource("UniFiSite",
+						siteDesc, "site_name", siteName) : null;
 				// Peer review 7: an NVR with no MAC is not registered, so it
 				// has no edges: no site to NVR edge and no NVR to camera
 				// edges. Its cameras are still registered and collect, with
@@ -1513,7 +1818,7 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 				// (full-set would drop that site's device edges); the NVR
 				// keeps its existing site edge and its cameras below. See
 				// SiteIsolation.nvrParentSite.
-				if (nvrKey != null && java.util.Objects.equals(siteName,
+				if (nvrKey != null && namedSite && siteName.equals(
 						SiteIsolation.nvrParentSite(s.siteNames(), s.failedSites))) {
 					rb.parent(siteKey, nvrKey);
 				}
@@ -1535,10 +1840,65 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		// dead controller-side LLDP read).
 		emitVmnicHostStitch(rb, s);
 
-		logInfo("Relationships built: World>Site>{Gateway>WAN, Switch>Port, "
-				+ "AP>Radio, WirelessAggregate, NVR>Camera} tree"
+		logInfo("Relationships built: World>Site>{Gateway>WAN, "
+				+ "[Gateway>]Switch*>Port, [Gateway>][Switch*>]AP*>Radio, "
+				+ "WirelessAggregate, NVR>Camera} tree"
 				+ (stitcher != null ? " + vmnic→port stitch" : ""));
 		return rb.build();
+	}
+
+	/**
+	 * Issue #20, second half: whether this cycle leaves the NVR's site out
+	 * of the relationships ({@link ProtectEdgeHold}). Protect counts as read
+	 * when the bootstrap arrived with an NVR that has a MAC, the only case
+	 * in which the Site &gt; NVR edge can be built. Logs at INFO when a hold
+	 * starts and at WARN when the grace period has passed, once per streak.
+	 */
+	private boolean holdNvrSite(Snapshot s, String nvrSite) {
+		boolean protectRead = s.protect != null
+				&& UniFiIds.mac(s.protect.get("nvr").get("mac").asString()) != null;
+		ProtectEdgeHold.Decision d = protectEdgeHold.cycle(protectRead,
+				protectRead ? null : platformKnowsNvr());
+		int n = protectEdgeHold.unreadCycles();
+		if (d == ProtectEdgeHold.Decision.HOLD && n == 1) {
+			logInfo("Relationships: Protect was not read this cycle; site "
+					+ nvrSite + " keeps its relationships, NVR edge included, "
+					+ "until Protect is read again (at most "
+					+ ProtectEdgeHold.GRACE_CYCLES + " cycles)");
+		} else if (d == ProtectEdgeHold.Decision.EXPIRED
+				&& n == ProtectEdgeHold.GRACE_CYCLES + 1) {
+			logWarn("Relationships: Protect not read for "
+					+ ProtectEdgeHold.GRACE_CYCLES + " cycles; site " + nvrSite
+					+ " is published again without its NVR edge");
+		}
+		return d == ProtectEdgeHold.Decision.HOLD && nvrSite != null;
+	}
+
+	/**
+	 * Issue #20: whether the platform holds a UniFi NVR for this adapter
+	 * instance (monitoring or stopped), from the SDK's {@code adapterCache};
+	 * {@code null} when that cannot be read.
+	 */
+	private Boolean platformKnowsNvr() {
+		try {
+			com.integrien.alive.common.adapter3.AdapterCache cache = adapterCache;
+			if (cache == null) return null;
+			List<ResourceConfig> known = new ArrayList<>();
+			if (cache.getMonitoringResources() != null) {
+				known.addAll(cache.getMonitoringResources());
+			}
+			if (cache.getStoppedResources() != null) {
+				known.addAll(cache.getStoppedResources());
+			}
+			for (ResourceConfig rc : known) {
+				if (rc != null && ReadKinds.NVR.equalsIgnoreCase(rc.getResourceKind())) {
+					return Boolean.TRUE;
+				}
+			}
+			return Boolean.FALSE;
+		} catch (RuntimeException e) {
+			return null;
+		}
 	}
 
 	/**
@@ -1608,6 +1968,13 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 	/** Build 15 (issue #23): the port index, or null when it has none. */
 	private static Integer portIdx(SimpleJson port) {
 		return UniFiIds.portIdx(port.get("port_idx").asString());
+	}
+
+	/** Build 18 (issue #15): a registered device's kind in the uplink tree. */
+	private static UplinkTree.Kind uplinkKind(String type) {
+		if (isGateway(type)) return UplinkTree.Kind.GATEWAY;
+		return "usw".equals(type) ? UplinkTree.Kind.SWITCH
+				: UplinkTree.Kind.ACCESS_POINT;
 	}
 
 	private static String deviceDisplayName(SimpleJson dev) {
@@ -1779,10 +2146,13 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 			// fails only when every site fails (or /self/sites, above).
 			// Codex P1: a site refused with 401, 403 or 429 is not asked again
 			// for 15 minutes (60 s after any other failure); it stays failed.
+			// Review R5-N1: a nameless row is not asked for (the enumeration
+			// skips it and leaves Site and device kinds out that cycle).
 			List<String> siteNames = new ArrayList<>();
 			for (SimpleJson site : siteData.asList()) {
 				siteNames.add(site.get("name").asString());
 			}
+			siteNames = SiteIsolation.named(siteNames);
 			SiteReads.Result<SimpleJson> deviceReads = SiteReads.readAll(
 					"stat/device", siteNames, api::statDevice, adapter::logWarn,
 					siteCooldowns, adapter::logInfo);
@@ -1943,13 +2313,13 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 			}
 		}
 
-		/** Site names in /self/sites order. */
+		/** Named site names in /self/sites order (review R5-N1: no nameless rows). */
 		List<String> siteNames() {
 			List<String> names = new ArrayList<>();
 			for (SimpleJson site : sites.get("data").asList()) {
 				names.add(site.get("name").asString());
 			}
-			return names;
+			return SiteIsolation.named(names);
 		}
 
 		SimpleJson devicesForSite(String siteName) {
@@ -2212,7 +2582,10 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 					if (idx2 == null) continue; // build 15, issue #23
 					String portKey = switchMac + "_" + idx2;
 					String portName = portDisplayName(port, idx2);
-					OwnPort candidate = new OwnPort(portKey, portName);
+					// Build 18 (#27 item 4): the edge carries the port's
+					// resource name; the join aliases stay the bare labels.
+					OwnPort candidate = new OwnPort(portKey,
+							UniFiIds.childName(portName, deviceDisplayName(dev)));
 					// Dedup via a Set: same joint key from both aliases when
 					// display name == hardware label must not double-count
 					// into a spurious ambiguity.

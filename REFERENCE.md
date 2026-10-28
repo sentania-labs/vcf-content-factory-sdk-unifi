@@ -1,6 +1,6 @@
 # VCF Content Factory UniFi Controller: Reference
 
-Generated from `describe.xml` and `resources.properties` for build 17 (dev 0.0.0.17).
+Generated from `describe.xml` and `resources.properties` for build 18 (dev 0.0.0.18).
 
 ## Adapter
 
@@ -381,6 +381,25 @@ Generated from `describe.xml` and `resources.properties` for build 17 (dev 0.0.0
 | `used_bytes` | Used | metric | bytes | yes |
 | `total_bytes` | Total | metric | bytes | yes |
 | `usage_pct` | Usage % | metric | % | yes |
+| `source` | Source | property | - | - |
+
+> Build 18 (issue #39): bytes, from the Protect bootstrap's
+> `nvr.systemInfo.storage` (`size`, `used`: the recording volume; on the
+> devel UDM Pro the console reports the same total as the primary space's
+> `total_bytes`), or, only when that pair is missing,
+> `nvr.storageStats.recordingSpace` (`total`, `used`: Protect's share of
+> the volume). A total and a used are never taken from different sources.
+> All three are published together and only when a usable pair is sent
+> (total above 0, used not negative and not above the total); `usage_pct`
+> is used / total * 100, so never above 100. `source` (build 18 review)
+> names the pair that fed them, `systemInfo` (the volume) or
+> `recordingSpace` (Protect's share), so a step in `total_bytes` from a
+> change of source can be told apart. A pair reporting more used than total
+> is not published and is logged at WARN once per streak of cycles.
+> Builds up to 17 read `nvr.storageInfo`, which current Protect does not
+> send, so the three never published. Protect fills the volume and then
+> recycles the oldest footage, so a usage near 100 % is normal for a
+> recording NVR (devel: 99.1 %).
 
 #### Configuration
 
@@ -449,19 +468,170 @@ Generated from `describe.xml` and `resources.properties` for build 17 (dev 0.0.0
 **Name**: UniFi Controller Infrastructure
 
 ```
-unifi_controller
-    └── UniFi World
-        └── UniFi Site
-            ├── UniFi Gateway
-            │   └── UniFi WAN Interface
-            ├── UniFi Switch
-            │   └── UniFi Switch Port
-            ├── UniFi Access Point
-            │   └── UniFi Radio
-            ├── UniFi NVR
-            │   └── UniFi Camera
-            └── UniFi Wireless Summary
+UniFi World
+    └── UniFi Site
+        ├── UniFi Gateway
+        │   ├── UniFi WAN Interface
+        │   ├── UniFi Switch (nested) ...
+        │   └── UniFi Access Point (nested) ...
+        ├── UniFi Switch (nested: a switch under a switch, any depth)
+        │   ├── UniFi Switch Port
+        │   └── UniFi Access Point (nested: an AP under an AP, any depth)
+        │       └── UniFi Radio
+        ├── UniFi Access Point (nested)
+        │   └── UniFi Radio
+        ├── UniFi NVR
+        │   └── UniFi Camera
+        └── UniFi Wireless Summary
 ```
+
+The spec is rooted at the World kind (`rootResourceKind="UniFiWorld"`, each
+path starting `unifi_controller::UniFiWorld||unifi_controller::UniFiSite::child||...`),
+as VMware's own vSphere adapter roots "vSphere Hosts and Clusters" at
+`VMWARE::vSphere World`. Up to build 17 it was rooted at the adapter instance
+kind; the instance resource has no children (its only parent is Universe), so
+the tree showed the instance and nothing under it (devel and devel_9_1,
+2026-10-28). The adapter instance is not linked to the World.
+
+Build 18 (issue #15): a switch or access point is a child of the device
+it uplinks to (`uplink.uplink_mac`), so the tree follows the cabling and a
+device going down shows on everything behind it, as vSphere's Cluster >
+Host > VM does. Nesting follows Gateway > Switch (any depth) > Access Point
+(any depth); describe.xml declares the repeated levels with
+`::child/recursive`. The captured vendor form is VMware's vSphere Hosts and
+Clusters `VMWARE::HostFolder::child/recursive/preferred`; this pak leaves
+`/preferred` off on purpose. The SDK's describe validator
+(`TraversalSpecUtil.validateResKindPath`, identical bytecode in the 8.18.7
+and 9.1.1 SDKs) treats `/recursive` and `/preferred` as independent
+attributes and accepts all nine paths as written; it only limits where
+`/preferred` may go (not on the first or last level, not with `/skip`, not
+before a wildcard level). What `/preferred` does at runtime is not
+documented anywhere we have, and each device here has exactly one parent, so
+there is no alternative path for it to prefer. That Ops renders the bare
+`/recursive` paths as intended is a devel install check. A device is placed directly under its
+Site, and logged once at INFO, when its uplink is not a discovered device of
+the site, when the uplinks loop (every device on the loop), or when the pair
+cannot nest in the tree (a switch behind an access point, through a wireless
+or pass-through uplink). A gateway is always under its Site. The devel
+console (17 devices) nests up to five deep below the gateway: Switch >
+Switch > Switch > Switch > Access Point, and an access point behind an
+in-wall access point.
+
+### Object names
+
+Build 18 (issue #27, item 4): an object that exists once per parent is
+named `<label> (<parent>)`, the form Broadcom's own adapters use (for
+example vSAN "Storage Pool (<host>)"): switch ports `Port 3 (<switch>)` (or
+`<custom port name> (<switch>)`), WAN interfaces `WAN 1 (<gateway>)`,
+radios `5 GHz (<access point>)`, and `Wireless Summary (<site>)`. The
+parent's name is its display name (a device's name, or model and MAC tail
+when it has none; a site's description). Only the name changes, never the
+identifier, so an object keeps its history. The pack opts into renames
+(`isResourceRenameAllowed()` returns `true`, as Broadcom's vSphere and vSAN
+adapters do; the SDK default is `false`), so objects discovered before
+build 18 take the new names, and a device or site renamed on the controller
+is renamed in VCF Operations on the next cycle (see CHANGELOG, build 18;
+not yet seen on an upgraded instance).
+
+### Removed objects
+
+Build 18 (issue #20, framework buildkit 1.0.22): an object the controller no
+longer lists is marked **Not Existing** after it has been missing from 12
+consecutive complete collection cycles (an hour at the default 5-minute
+interval), the way the vSphere, vSAN and NSX adapters mark a deleted
+object. VCF Operations then stops collecting it, shows it as Not Existing
+(health grey) and deletes it, with its history, after the global **Deleted
+Objects** retention setting (168 hours by default). The pack declares a kind
+read in full only when nothing about its read failed that cycle, and only a
+kind read in full counts a miss:
+
+| Kinds | Counted only when |
+|---|---|
+| Site, Wireless Summary | `/self/sites` was read with `meta.rc` `ok`, listed at least one site, and every site row carried a `name` |
+| Gateway, Switch, Access Point | every site's device list was read (no failed or cooling-down site, `meta.rc` `ok`), at least one device record came back across all sites, no gateway, switch or access point came without a MAC, and no device record came without a `type` |
+| WAN Interface, Switch Port, Radio | as their device, and every gateway (WAN), switch (port) or access point (radio) is informing the controller; every gateway's record carries `wan1`, and every switch and access point sent a non-empty port or radio table with an index or radio code on every row |
+| NVR, Camera | the Protect bootstrap was read and carried an NVR; the NVR also needs its MAC, cameras need a non-empty camera list with every camera's MAC |
+
+These empty answers are not taken as proof that the objects are gone,
+and count nothing:
+
+- an empty site list, or one whose `meta.rc` is not `ok`: no kind at all
+  (a controller always has its default site);
+- no device record on any site, each answering `meta.rc` `ok` with
+  `data: []`: no gateway, switch, access point, WAN, port or radio (a
+  UniFi OS console lists itself; a Network app mid-start or a proxy stub
+  answers this way);
+- `cameras: []` with an NVR present: no camera;
+- an empty or missing port table on a listed switch, or radio table on a
+  listed access point: no port or radio (every switch has ports and every
+  access point a radio);
+- a listed gateway whose record has no `wan1`: no WAN (every gateway has
+  a WAN 1; a missing `wan2` is a real configuration and is not guarded).
+- a site row with no `name`: the row is skipped (no Site with an empty
+  key), and no site, Wireless Summary, gateway, switch, access point, WAN,
+  port or radio is counted that cycle. Its `stat/device` is not asked for,
+  it is never the NVR's parent site (when it is the first row, the NVR
+  keeps the site edge it already has), and the "no longer in the
+  controller's site list" WARN is not raised that cycle.
+
+The cost: **the last site, the last device on the controller, the last
+camera under an NVR, and the last port, radio or WAN 1 of a listed device
+are never removed automatically**; delete them by hand.
+
+Nothing else is guarded, and the last object *of a type* is removed when
+other devices are still listed. Remove the only switch while a gateway or
+access point is still listed, and the switch kind is read: that switch and
+its ports are marked and removed, which is correct. Removing a gateway
+removes its WANs, a `wan2` the gateway stops reporting is removed, and a
+site whose devices are all gone loses them while another site still lists
+devices (a site can be empty).
+
+Removal that is off for a kind is never silent: each cycle that leaves a
+kind out logs the kinds and the reason once at INFO, until a cycle without
+that reason ("Removal of vanished objects is off for ..."). A site that
+drops out of the site list is named at WARN on the first cycle it is
+missing.
+
+So one unreadable site, one disconnected switch or one Protect outage
+counts nothing for the kinds it touches, however long it lasts; the count
+resumes when the read is complete again. A cycle in which the whole snapshot
+failed counts nothing at all. UniFi World is never marked. The counts are
+held in memory, so a collector restart delays a mark and never makes one
+early. A device left pending adoption on the controller is not discovered
+(build 15), so an object an earlier build registered for it is marked like
+any other device the controller no longer lists. A marked object that comes
+back is registered again by discovery; that path is not yet seen live
+(framework note, `knowledge/context/sdk/vanished_object_lifecycle.md` in the
+factory).
+
+Removal follows what the controller lists, not why it stopped listing it.
+Narrowing the account's site access removes those sites and their devices
+(the WARN above names each site when it goes missing),
+and a radio the controller no longer reports (for example a band disabled
+in configuration, if UniFi drops it from `radio_table_stats`; not verified)
+is removed too. If it comes back, it returns as a new object with no
+history.
+
+### Relationships when a read fails
+
+Build 18 (issue #20): a relationship is never removed because one read
+failed. VCF Operations replaces a parent's children only when the pack
+sends that parent; a parent not sent keeps what it had. A site whose device
+list could not be read is not sent (build 14). The NVR's site (the first
+site) is not sent on a cycle where Protect was not read, so the Site > NVR
+edge stays; this holds for at most 12 consecutive cycles without Protect,
+and only while VCF Operations holds a UniFi NVR for the instance. The NVR
+is sent with its cameras only on a cycle that read Protect, so NVR > Camera
+edges stay through an outage. The vmnic stitch's HostSystem > Switch Port
+edges are only ever added, never replaced, so a cycle without the Suite API
+removes none of them. The cost of this rule: a relationship that really
+changed during such a cycle shows on the next good one. An NVR left behind
+after Protect is uninstalled is never marked Not Existing (the NVR kind is
+counted only on a cycle that read Protect), so VCF Operations keeps holding
+a UniFi NVR for the instance, and the 12-cycle count is in memory: after
+every collector restart the first site's edges are frozen again for up to
+12 cycles, with the same INFO and WARN. Delete the leftover NVR object by
+hand to stop it.
 
 ---
 

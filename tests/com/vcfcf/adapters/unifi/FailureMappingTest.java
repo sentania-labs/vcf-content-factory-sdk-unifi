@@ -23,6 +23,7 @@ public final class FailureMappingTest {
 		wrappedUnreachableIsDown();
 		everythingElseIsError();
 		connectFailureIsNarrowerThanUnreachable();
+		unifiOsRequired();
 		System.out.println("FailureMappingTest: all assertions passed");
 	}
 
@@ -135,5 +136,22 @@ public final class FailureMappingTest {
 		RuntimeException outer = new RuntimeException("outer", loop);
 		loop.initCause(outer);
 		T.check(!UniFiFailures.isConnectFailure(outer), "a cause cycle terminates");
+	}
+
+	/** Build 18 (issue #17): a 404 names the UniFi OS requirement. */
+	static void unifiOsRequired() {
+		Throwable login = new RuntimeException(
+				"SessionCookieAuth: failed to acquire session token",
+				new UniFiHttpException("UniFi login failed: HTTP 404", 404, true));
+		String m = UniFiFailures.unifiOsRequired(login);
+		T.check(m != null && m.startsWith("This adapter supports UniFi OS consoles only")
+				&& m.contains("/api/auth/login"), "login 404: " + m);
+		String n = UniFiFailures.unifiOsRequired(new UniFiHttpException(
+				"UniFi GET /proxy/network/api/self/sites returned HTTP 404", 404, false));
+		T.check(n != null && n.contains("/proxy/network"), "network 404: " + n);
+		T.eq(null, UniFiFailures.unifiOsRequired(new UniFiHttpException(
+				"UniFi login failed: HTTP 401", 401, true)), "401 is not the 404 message");
+		T.eq(null, UniFiFailures.unifiOsRequired(new IOException("x")), "no HTTP status");
+		T.eq(null, UniFiFailures.unifiOsRequired(null), "null");
 	}
 }

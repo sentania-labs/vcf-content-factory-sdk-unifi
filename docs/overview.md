@@ -38,6 +38,15 @@ The pack discovers an eleven-kind infrastructure tree (see
 | UniFi NVR | `UniFiNvr` | Protect NVR. |
 | UniFi Camera | `UniFiCamera` | Protect camera. |
 
+Switches and access points nest under the device they uplink to
+(Gateway > Switch > ... > Access Point), so the tree follows the cabling;
+a device whose uplink cannot be placed (unknown, a loop, a switch behind an
+access point) sits directly under its Site (build 18). Per-parent objects
+are named `<label> (<parent>)`: `Port 3 (<switch>)`, `WAN 1 (<gateway>)`,
+`5 GHz (<access point>)`, `Wireless Summary (<site>)` (build 18; existing
+objects are renamed too, and a rename on the controller carries over; see
+REFERENCE.md, Object names).
+
 ### Metrics scope
 
 Roughly 130 metric and property keys across the eleven kinds (see
@@ -278,6 +287,26 @@ logged at debug only, never WARN spam.
   enumerates its topology on the collect path (`discoverOnCollect()`), so a
   freshly created instance populates on its first collection cycle rather
   than waiting on a discovery task the platform may never invoke.
+
+- **Removed objects are marked Not Existing and deleted** (build 18,
+  issue #20). An object the controller no longer lists, missing for 12
+  consecutive complete cycles, is marked Not Existing and VCF Operations
+  deletes it after the Deleted Objects retention. A kind counts a miss only
+  in a cycle that read it in full: an unreadable site, a disconnected
+  switch or access point, or a Protect outage counts nothing for the kinds
+  it touches. Guarded empty answers count nothing too: an empty site list,
+  no device on any site, an empty camera list under a listed NVR, and an
+  empty port or radio table or missing `wan1` on a listed device, so the
+  last site, device, camera, and those children are removed by hand. The
+  last device of a type is removed when other devices are still listed.
+  The first upgrade marks every leftover from older builds
+  (see README, Upgrading to build 18). Rule: REFERENCE.md, Removed objects.
+
+- **A failed read does not drop relationships** (build 18, issue #20). On a
+  cycle without Protect the NVR's site keeps its edges, NVR included, for
+  up to 12 cycles; NVR > Camera edges and the vmnic stitch edges are kept
+  through Protect and Suite API outages. Details: REFERENCE.md,
+  Relationships when a read fails.
 
 ### Device state codes
 

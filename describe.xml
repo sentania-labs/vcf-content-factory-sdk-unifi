@@ -381,6 +381,9 @@
 				                   isProperty="false" defaultMonitored="true" unit="bytes"/>
 				<ResourceAttribute key="usage_pct" nameKey="237" dataType="float"
 				                   isProperty="false" defaultMonitored="true" unit="%"/>
+				<!-- Build 18 review N3: which pair fed the three metrics,
+				     systemInfo (the volume) or recordingSpace (Protect's share). -->
+				<ResourceAttribute key="source" nameKey="245" dataType="string" isProperty="true"/>
 			</ResourceGroup>
 
 			<ResourceGroup key="Configuration" nameKey="238" instanced="false">
@@ -437,19 +440,52 @@
 		<TraversalSpecKind name="UniFi Controller Infrastructure"
 		                   nameKey="280"
 		                   rootAdapterKind="unifi_controller"
-		                   rootResourceKind="unifi_controller"
+		                   rootResourceKind="UniFiWorld"
 		                   filterType="GENERIC_RELATION"
 		                   usedFor="ALL">
+			<!-- Build 18 (traversal root): the spec roots at UniFiWorld, as
+			     VMWARE roots "vSphere Hosts and Clusters" at "vSphere World"
+			     (each path starts at the root kind itself, no ::child). Up to
+			     build 17 it rooted at the adapter instance kind, whose resource has no
+			     children (its only parent is Universe), so the first hop to
+			     UniFiWorld never matched and the tree stopped at the instance.
+			     The instance is not linked to the World: no such edge exists in
+			     the collected data. -->
+			<!-- Build 18 (issue #15): a device hangs under its uplink device
+			     (uplink.uplink_mac) when the pair fits Gateway > Switch* >
+			     Access Point*, else under the Site (UplinkTree). "/recursive"
+			     repeats a level for a chain of the same kind. The captured
+			     vendor form is VMWARE's "vSphere Hosts and Clusters"
+			     "VMWARE::HostFolder::child/recursive/preferred"; /preferred is
+			     left off on purpose. The SDK's describe validator
+			     (TraversalSpecUtil.validateResKindPath, identical in 8.18.7 and
+			     9.1.1) parses /recursive and /preferred as independent segment
+			     attributes and accepts all nine paths below as written. It only
+			     constrains /preferred (not on the first or last level, not with
+			     /skip, not before a wildcard level); what /preferred changes at
+			     runtime is not documented, and each device here has exactly one
+			     parent, so there is no alternative path for it to prefer. Live
+			     devel 2026-10-28: up to five hops below the gateway (Switch x4 >
+			     Access Point), and an access point behind an in-wall access
+			     point. -->
 			<!-- World > Site > Gateway > WAN Interface -->
-			<ResourcePath path="unifi_controller::unifi_controller||unifi_controller::UniFiWorld::child||unifi_controller::UniFiSite::child||unifi_controller::UniFiGateway::child||unifi_controller::UniFiWanInterface::child"/>
-			<!-- World > Site > Switch > Switch Port -->
-			<ResourcePath path="unifi_controller::unifi_controller||unifi_controller::UniFiWorld::child||unifi_controller::UniFiSite::child||unifi_controller::UniFiSwitch::child||unifi_controller::UniFiSwitchPort::child"/>
-			<!-- World > Site > Access Point > Radio -->
-			<ResourcePath path="unifi_controller::unifi_controller||unifi_controller::UniFiWorld::child||unifi_controller::UniFiSite::child||unifi_controller::UniFiAccessPoint::child||unifi_controller::UniFiRadio::child"/>
+			<ResourcePath path="unifi_controller::UniFiWorld||unifi_controller::UniFiSite::child||unifi_controller::UniFiGateway::child||unifi_controller::UniFiWanInterface::child"/>
+			<!-- World > Site > Gateway > Switch (nested) > Switch Port -->
+			<ResourcePath path="unifi_controller::UniFiWorld||unifi_controller::UniFiSite::child||unifi_controller::UniFiGateway::child||unifi_controller::UniFiSwitch::child/recursive||unifi_controller::UniFiSwitchPort::child"/>
+			<!-- World > Site > Gateway > Switch (nested) > Access Point (nested) > Radio -->
+			<ResourcePath path="unifi_controller::UniFiWorld||unifi_controller::UniFiSite::child||unifi_controller::UniFiGateway::child||unifi_controller::UniFiSwitch::child/recursive||unifi_controller::UniFiAccessPoint::child/recursive||unifi_controller::UniFiRadio::child"/>
+			<!-- World > Site > Gateway > Access Point (nested) > Radio -->
+			<ResourcePath path="unifi_controller::UniFiWorld||unifi_controller::UniFiSite::child||unifi_controller::UniFiGateway::child||unifi_controller::UniFiAccessPoint::child/recursive||unifi_controller::UniFiRadio::child"/>
+			<!-- World > Site > Switch (nested) > Switch Port: no gateway in the site, or a fallback -->
+			<ResourcePath path="unifi_controller::UniFiWorld||unifi_controller::UniFiSite::child||unifi_controller::UniFiSwitch::child/recursive||unifi_controller::UniFiSwitchPort::child"/>
+			<!-- World > Site > Switch (nested) > Access Point (nested) > Radio -->
+			<ResourcePath path="unifi_controller::UniFiWorld||unifi_controller::UniFiSite::child||unifi_controller::UniFiSwitch::child/recursive||unifi_controller::UniFiAccessPoint::child/recursive||unifi_controller::UniFiRadio::child"/>
+			<!-- World > Site > Access Point (nested) > Radio -->
+			<ResourcePath path="unifi_controller::UniFiWorld||unifi_controller::UniFiSite::child||unifi_controller::UniFiAccessPoint::child/recursive||unifi_controller::UniFiRadio::child"/>
 			<!-- World > Site > NVR > Camera -->
-			<ResourcePath path="unifi_controller::unifi_controller||unifi_controller::UniFiWorld::child||unifi_controller::UniFiSite::child||unifi_controller::UniFiNvr::child||unifi_controller::UniFiCamera::child"/>
+			<ResourcePath path="unifi_controller::UniFiWorld||unifi_controller::UniFiSite::child||unifi_controller::UniFiNvr::child||unifi_controller::UniFiCamera::child"/>
 			<!-- World > Site > Wireless Aggregate -->
-			<ResourcePath path="unifi_controller::unifi_controller||unifi_controller::UniFiWorld::child||unifi_controller::UniFiSite::child||unifi_controller::UniFiWirelessAggregate::child"/>
+			<ResourcePath path="unifi_controller::UniFiWorld||unifi_controller::UniFiSite::child||unifi_controller::UniFiWirelessAggregate::child"/>
 		</TraversalSpecKind>
 	</TraversalSpecKinds>
 

@@ -26,6 +26,7 @@ public final class SiteIsolationTest {
 		nvrNotUnderAFailedFirstSite();
 		deviceMovedFromFailedToReadableSite();
 		deviceMovedFromReadableIntoFailedSite();
+		namelessRowsAreNotSites();
 		System.out.println("SiteIsolationTest: all assertions passed");
 	}
 
@@ -136,5 +137,31 @@ public final class SiteIsolationTest {
 				"R is emitted without it (its old edge drops)");
 		T.check(!SiteIsolation.emitsChildren(f, "F"),
 				"F is not emitted yet (no new edge until F reads)");
+	}
+
+	/**
+	 * Review R5-N1: a nameless /self/sites row is not a stat/device target
+	 * and not the NVR's parent; the first named site is, as before.
+	 */
+	static void namelessRowsAreNotSites() {
+		T.check(!SiteIsolation.hasName(null), "null name");
+		T.check(!SiteIsolation.hasName(""), "empty name");
+		T.check(!SiteIsolation.hasName("  "), "blank name");
+		T.check(SiteIsolation.hasName("default"), "named");
+		List<String> rows = new java.util.ArrayList<>();
+		rows.add(null);
+		rows.add("default");
+		rows.add(" ");
+		rows.add("branch");
+		T.eq(List.of("default", "branch"), SiteIsolation.named(rows),
+				"nameless rows dropped, order kept");
+		T.eq(List.<String>of(), SiteIsolation.named(java.util.Collections
+				.singletonList((String) null)), "only a nameless row");
+		T.eq(null, SiteIsolation.nvrParentSite(SiteIsolation.named(
+				java.util.Collections.singletonList((String) null)), failed()),
+				"only a nameless row: no NVR parent");
+		T.eq("default", SiteIsolation.nvrParentSite(
+				SiteIsolation.named(List.of("default", "branch")), failed()),
+				"all named: first site, unchanged");
 	}
 }

@@ -1,6 +1,7 @@
 package com.vcfcf.adapters.unifi;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -69,6 +70,24 @@ final class SiteIsolation {
 	static boolean emitsChildren(Map<String, String> failedSites,
 			String siteName) {
 		return !failedSites.containsKey(siteName);
+	}
+
+	/**
+	 * Review R5-N1: a {@code /self/sites} row has an identity only with a
+	 * non-blank {@code name}; a nameless row is never a Site, a
+	 * {@code stat/device} target or an NVR parent.
+	 */
+	static boolean hasName(String siteName) {
+		return siteName != null && !siteName.trim().isEmpty();
+	}
+
+	/** Review R5-N1: {@code siteNames} without the nameless rows, in order. */
+	static List<String> named(List<String> siteNames) {
+		List<String> out = new ArrayList<>();
+		for (String n : siteNames) {
+			if (hasName(n)) out.add(n);
+		}
+		return out;
 	}
 
 	/**

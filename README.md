@@ -65,6 +65,28 @@ discovered them: on devel the gateway first seen as "udm" became "Bentwood"
 on the first build 18 cycle. Filters, groups and rules keyed on device names
 need the same check. Details: REFERENCE.md, Object names.
 
+**Build 18 also deletes objects the controller no longer lists, and the
+first upgrade deletes every leftover at once (issue #20).** An object
+missing from 12 consecutive complete collection cycles (an hour at the
+default 5-minute interval) is marked Not Existing, and VCF Operations
+deletes it, with its metric history, alerts and group membership, after the
+Deleted Objects retention (Global Settings; 168 hours by default, 6 hours on
+some labs). Counting starts on the first build 18 cycle and covers every
+object the pack registered in the past under a key it no longer produces,
+so about an hour after the upgrade these are marked, and deleted at the end
+of the retention window. This cannot be undone. On devel that includes:
+
+- switch ports registered as `<mac>_0` by builds before 15 (issue #23);
+- a camera removed from Protect (the second "Backyard" camera, which still
+  reads Disconnected) and anything else Protect no longer lists;
+- a gateway the controller no longer lists, with its WAN interfaces;
+- a device an earlier build registered while it was pending adoption, and
+  any radio registered as `<mac>_` before build 15.
+
+Before upgrading, list the pack's objects (Inventory, filter by adapter
+type UniFi Controller) and export anything whose history you want to keep.
+Details: REFERENCE.md, Removed objects.
+
 ## Configuration
 
 Create an adapter instance under **Accounts > Add Account** (Integrations, as above) and provide:

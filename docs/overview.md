@@ -288,6 +288,15 @@ logged at debug only, never WARN spam.
   freshly created instance populates on its first collection cycle rather
   than waiting on a discovery task the platform may never invoke.
 
+- **Removed objects are marked Not Existing and deleted** (build 18,
+  issue #20). An object the controller no longer lists, missing for 12
+  consecutive complete cycles, is marked Not Existing and VCF Operations
+  deletes it after the Deleted Objects retention. A kind counts a miss only
+  in a cycle that read it in full: an unreadable site, a disconnected
+  switch or access point, or a Protect outage counts nothing for the kinds
+  it touches. The first upgrade marks every leftover from older builds
+  (see README, Upgrading to build 18). Rule: REFERENCE.md, Removed objects.
+
 ### Device state codes
 
 The UniFi device `state` field (`stat/device`), as this pack reads it for

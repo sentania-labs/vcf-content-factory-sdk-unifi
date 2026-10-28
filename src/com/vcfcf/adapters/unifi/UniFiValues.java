@@ -116,7 +116,7 @@ final class UniFiValues {
 	}
 
 	/** The state as a whole number, or null. */
-	private static Integer stateCode(String rawState) {
+	static Integer stateCode(String rawState) {
 		Double d = number(rawState);
 		if (d == null || d != Math.rint(d) || Math.abs(d) > Integer.MAX_VALUE) {
 			return null;

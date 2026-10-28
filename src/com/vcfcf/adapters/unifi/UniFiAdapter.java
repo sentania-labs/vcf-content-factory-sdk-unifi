@@ -153,6 +153,13 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 	private static final String RENAME_STREAK = "rename";
 
 	/**
+	 * Issue #20: the kinds the last finished enumeration read in full
+	 * ({@link ReadKinds}) and its thread, or null while one runs or after one
+	 * threw. Volatile: a discovery pass may run on another thread.
+	 */
+	private volatile ReadRecord lastRead;
+
+	/**
 	 * Build 18 review N2: closes the streak of any warning that did not
 	 * recur in the cycle just ended, so a later failure warns again.
 	 */
@@ -549,6 +556,39 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 	}
 
 	/**
+	 * Issue #20 (buildkit 1.0.22): the kinds this cycle's enumeration read
+	 * in full, so the framework counts a miss (and after
+	 * {@code notExistingMissedCycles()}, 12 by default, marks NOT_EXISTING)
+	 * only for those. The rule is {@link ReadKinds}: no device kind when any
+	 * site's {@code stat/device} failed, no NVR or camera when the Protect
+	 * bootstrap failed.
+	 */
+	@Override
+	protected Set<String> kindsReadThisCycle() {
+		ReadRecord r = lastRead;
+		// Only this thread's enumeration speaks for this cycle: a discovery
+		// pass on another thread (getDiscoverer) never stands in for it.
+		return r != null && r.thread == Thread.currentThread() ? r.kinds : null;
+	}
+
+	/** Issue #20: UniFi World is never marked (it is always delivered). */
+	@Override
+	protected Set<String> notExistingExcludedKinds() {
+		return ReadKinds.EXCLUDED;
+	}
+
+	/** Issue #20: one enumeration's read kinds and the thread that ran it. */
+	private static final class ReadRecord {
+		final Thread thread;
+		final Set<String> kinds;
+
+		ReadRecord(Thread thread, Set<String> kinds) {
+			this.thread = thread;
+			this.kinds = kinds;
+		}
+	}
+
+	/**
 	 * The single, shared resource-tree enumeration. Walks the per-cycle UniFi
 	 * snapshot and emits one {@link ResourceConfig} per resource to {@code sink}.
 	 *
@@ -571,6 +611,10 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 	@Override
 	protected void enumerateResources(ResourceSink sink)
 			throws InterruptedException, Exception {
+		// Issue #20: nothing is declared read until this enumeration has
+		// finished; a throw leaves null (the framework marks nothing).
+		lastRead = null;
+		ReadKinds read = new ReadKinds();
 		// Build 18 (#27 item 4): every resource is looked up by key first,
 		// so the SDK records a changed name (renameIfChanged).
 		ResourceSink out = rc -> {
@@ -579,6 +623,7 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		};
 		Snapshot s = currentSnapshot();
 		out.accept(rcOf("UniFiWorld", "UniFi World", "world_id", "unifi_world"));
+		read.sitesRead(); // Snapshot.build throws without a site list
 
 		int sites = 0, gateways = 0, switches = 0, ports = 0, aps = 0,
 				radios = 0, wans = 0, aggregates = 0, cameras = 0, nvrs = 0;
@@ -589,13 +634,21 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 			out.accept(rcOf("UniFiSite", siteDesc, "site_name", siteName));
 			sites++;
 
-			for (SimpleJson dev : s.devicesForSite(siteName).get("data").asList()) {
+			SimpleJson siteDevices = s.devicesForSite(siteName).get("data");
+			read.site(s.failedSites.containsKey(siteName),
+					s.devicesBySite.containsKey(siteName) && siteDevices.isList());
+			for (SimpleJson dev : siteDevices.asList()) {
 				String type = dev.get("type").asString("");
 				// Build 15 (issue #23): no MAC, no identity; skipped here,
 				// in buildRelationships and in the snapshot index alike
 				// (Snapshot.build logs it at DEBUG).
 				String mac = deviceMac(dev);
-				if (mac == null) continue;
+				if (mac == null) {
+					if (isGateway(type) || "usw".equals(type) || "uap".equals(type)) {
+						read.deviceWithoutIdentity(); // #20: unknown which one
+					}
+					continue;
+				}
 				// Codex P2: a device pending adoption is not registered (the
 				// same rule as the site's Device Count; isDiscovered).
 				if (!isDiscovered(dev)) continue;
@@ -604,6 +657,7 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 				if (isGateway(type)) {
 					out.accept(rcOf("UniFiGateway", name, "mac", mac));
 					gateways++;
+					read.gateway(ReadKinds.informing(dev.get("state").asString()));
 					if (!dev.get("wan1").isNull()) {
 						out.accept(rcOf("UniFiWanInterface",
 								UniFiIds.childName("WAN 1", name),
@@ -620,30 +674,43 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 					out.accept(rcOf("UniFiSwitch", name, "mac", mac));
 					switches++;
 					SimpleJson portTable = dev.get("port_table");
+					int portsNoIndex = 0;
 					if (!portTable.isNull()) {
 						for (SimpleJson port : portTable.asList()) {
 							Integer idx = portIdx(port);
-							if (idx == null) continue; // #23: never <mac>_0
+							if (idx == null) { // #23: never <mac>_0
+								portsNoIndex++;
+								continue;
+							}
 							out.accept(rcOf("UniFiSwitchPort",
 									UniFiIds.childName(portDisplayName(port, idx), name),
 									"port_key", mac + "_" + idx));
 							ports++;
 						}
 					}
+					read.switchPorts(ReadKinds.informing(dev.get("state").asString()),
+							portTable.isList(), portsNoIndex);
 				} else if ("uap".equals(type)) {
 					out.accept(rcOf("UniFiAccessPoint", name, "mac", mac));
 					aps++;
 					SimpleJson radioStats = dev.get("radio_table_stats");
+					int radiosNoCode = 0;
 					if (!radioStats.isNull()) {
 						for (SimpleJson radio : radioStats.asList()) {
 							String radioCode = radioCode(radio);
-							if (radioCode == null) continue; // peer review 7
+							if (radioCode == null) { // peer review 7
+								radiosNoCode++;
+								continue;
+							}
 							out.accept(rcOf("UniFiRadio",
 									UniFiIds.childName(radioDisplayName(radioCode), name),
 									"radio_key", mac + "_" + radioCode));
 							radios++;
 						}
 					}
+					read.accessPointRadios(
+							ReadKinds.informing(dev.get("state").asString()),
+							radioStats.isList(), radiosNoCode);
 				}
 			}
 
@@ -666,16 +733,23 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 					nvrs++;
 				}
 				SimpleJson cams = s.protect.get("cameras");
+				int camerasNoMac = 0;
 				if (!cams.isNull()) {
 					for (SimpleJson cam : cams.asList()) {
 						String camMac = UniFiIds.mac(cam.get("mac").asString());
-						if (camMac == null) continue; // #23
+						if (camMac == null) { // #23
+							camerasNoMac++;
+							continue;
+						}
 						out.accept(rcOf("UniFiCamera",
 								cam.get("name").asString(camMac),
 								"camera_mac", camMac));
 						cameras++;
 					}
 				}
+				// Issue #20: Protect kinds are read only on a bootstrap
+				// that arrived with an NVR (s.protect is null otherwise).
+				read.protect(nvrMac != null, cams.isList(), camerasNoMac);
 			}
 		}
 
@@ -684,6 +758,7 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 				+ " switches, " + ports + " ports, " + aps + " aps, "
 				+ radios + " radios, " + aggregates + " aggregates, "
 				+ nvrs + " nvr, " + cameras + " cameras");
+		lastRead = new ReadRecord(Thread.currentThread(), read.kinds());
 	}
 
 	/**

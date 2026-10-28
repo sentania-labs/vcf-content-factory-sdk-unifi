@@ -37,6 +37,14 @@ old names need updating. A device renamed on the controller since it was
 first discovered takes its current name too (devel: "udm" became
 "Bentwood"), so check name-keyed device filters as well. See [README.md, Upgrading to build 18](../README.md#upgrading-to-build-18).
 
+Build 18 also marks objects the controller no longer lists as Not
+Existing after 12 consecutive complete cycles, and VCF Operations deletes
+them after its Deleted Objects retention (issue #20). The first upgrade
+counts every leftover from older builds at once: `<mac>_0` switch ports, a
+camera removed from Protect, a gateway no longer listed, all marked about
+an hour after the upgrade and then deleted with their history. This cannot
+be undone. See [REFERENCE.md, Removed objects](../REFERENCE.md#removed-objects).
+
 ### Alerts
 
 The pak ships eight alerts with their symptoms and recommendations (build

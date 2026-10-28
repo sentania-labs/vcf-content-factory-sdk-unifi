@@ -533,6 +533,37 @@ build 18 take the new names, and a device or site renamed on the controller
 is renamed in VCF Operations on the next cycle (see CHANGELOG, build 18;
 not yet seen on an upgraded instance).
 
+### Removed objects
+
+Build 18 (issue #20, framework buildkit 1.0.22): an object the controller no
+longer lists is marked **Not Existing** after it has been missing from 12
+consecutive complete collection cycles (an hour at the default 5-minute
+interval), the way the vSphere, vSAN and NSX adapters mark a deleted
+object. VCF Operations then stops collecting it, shows it as Not Existing
+(health grey) and deletes it, with its history, after the global **Deleted
+Objects** retention setting (168 hours by default). The pack declares a kind
+read in full only when nothing about its read failed that cycle, and only a
+kind read in full counts a miss:
+
+| Kinds | Counted only when |
+|---|---|
+| Site, Wireless Summary | `/self/sites` was read (every cycle that collects at all) |
+| Gateway, Switch, Access Point | every site's device list was read (no failed or cooling-down site) and no gateway, switch or access point came without a MAC |
+| WAN Interface, Switch Port, Radio | as their device, and every gateway (WAN), switch (port) or access point (radio) is informing the controller and sent its port or radio table with an index or radio code on every row |
+| NVR, Camera | the Protect bootstrap was read and carried an NVR; the NVR also needs its MAC, cameras need every camera's MAC |
+
+So one unreadable site, one disconnected switch or one Protect outage
+counts nothing for the kinds it touches, however long it lasts; the count
+resumes when the read is complete again. A cycle in which the whole snapshot
+failed counts nothing at all. UniFi World is never marked. The counts are
+held in memory, so a collector restart delays a mark and never makes one
+early. A device left pending adoption on the controller is not discovered
+(build 15), so an object an earlier build registered for it is marked like
+any other device the controller no longer lists. A marked object that comes
+back is registered again by discovery; that path is not yet seen live
+(framework note, `knowledge/context/sdk/vanished_object_lifecycle.md` in the
+factory).
+
 ---
 
 ## Alerts

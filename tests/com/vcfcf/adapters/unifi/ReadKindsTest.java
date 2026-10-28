@@ -1,0 +1,286 @@
+package com.vcfcf.adapters.unifi;
+
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.LinkedHashSet;
+import java.util.Map;
+import java.util.Set;
+
+/**
+ * Issue #20: what the adapter declares read in full each cycle
+ * ({@link ReadKinds}), which is all the framework counts misses for. The
+ * counting and the 12-cycle mark are the framework's (buildkit 1.0.22,
+ * VanishedResourceTest); {@link #completeReadCountsMisses} drives a model of
+ * that rule over the declared kinds, the same order of operations as
+ * {@code VcfCfAdapter.markVanished}, so the pack-side cases read end to end.
+ * Run from the repo root (ci/run_java_tests.sh).
+ */
+public final class ReadKindsTest {
+
+	static final String CONNECTED = "1";
+
+	public static void main(String[] args) {
+		completeReadNamesEveryKind();
+		completeReadCountsMisses();
+		failedSiteMarksNothing();
+		siteWithNoDeviceListIsNotRead();
+		protectOutageMarksNoCamera();
+		protectWithoutNvrMacKeepsCameras();
+		cameraListGapsAreNotRead();
+		disconnectedSwitchKeepsItsPorts();
+		portWithNoIndexLeavesPortsOut();
+		accessPointWithoutRadioTableKeepsRadios();
+		gatewayNotInformingKeepsWans();
+		deviceWithNoMacLeavesDevicesOut();
+		noSiteListNamesNothing();
+		worldIsExcluded();
+		informingStates();
+		System.out.println("ReadKindsTest: all assertions passed");
+	}
+
+	/** A healthy devel-shaped cycle: one site, every table, Protect up. */
+	private static ReadKinds complete() {
+		ReadKinds r = new ReadKinds();
+		r.sitesRead();
+		r.site(false, true);
+		r.gateway(true);
+		r.switchPorts(true, true, 0);
+		r.accessPointRadios(true, true, 0);
+		r.protect(true, true, 0);
+		return r;
+	}
+
+	private static Set<String> set(String... kinds) {
+		return new LinkedHashSet<>(Arrays.asList(kinds));
+	}
+
+	private static final Set<String> NETWORK = set(ReadKinds.GATEWAY,
+			ReadKinds.WAN, ReadKinds.SWITCH, ReadKinds.PORT,
+			ReadKinds.ACCESS_POINT, ReadKinds.RADIO);
+
+	static void completeReadNamesEveryKind() {
+		T.eq(set(ReadKinds.SITE, ReadKinds.AGGREGATE, ReadKinds.GATEWAY,
+				ReadKinds.SWITCH, ReadKinds.ACCESS_POINT, ReadKinds.WAN,
+				ReadKinds.PORT, ReadKinds.RADIO, ReadKinds.NVR,
+				ReadKinds.CAMERA), complete().kinds(),
+				"a complete read names every kind but the world");
+	}
+
+	/**
+	 * The framework's rule, modelled: per cycle, a known object of a
+	 * declared, non-excluded kind that the enumeration did not deliver
+	 * takes a miss; a delivered one is reset; at the threshold it is marked.
+	 * A kind not declared this cycle neither counts nor resets.
+	 */
+	private static final class Model {
+		final Map<String, Integer> misses = new HashMap<>();
+		final Set<String> marked = new LinkedHashSet<>();
+
+		void cycle(Map<String, String> known, Set<String> delivered,
+				Set<String> declared) {
+			Set<String> read = new LinkedHashSet<>();
+			for (String k : declared) read.add(k.toLowerCase());
+			for (Map.Entry<String, String> e : known.entrySet()) {
+				String key = e.getKey();
+				String kind = e.getValue().toLowerCase();
+				if (!read.contains(kind)) continue;
+				if (ReadKinds.EXCLUDED.stream()
+						.anyMatch(x -> x.equalsIgnoreCase(kind))) continue;
+				if (delivered.contains(key)) {
+					misses.remove(key);
+					continue;
+				}
+				if (marked.contains(key)) continue;
+				int n = misses.merge(key, 1, Integer::sum);
+				if (n >= 12) marked.add(key);
+			}
+		}
+	}
+
+	/** The platform's objects on devel, legacy orphans included. */
+	private static Map<String, String> devel() {
+		Map<String, String> known = new HashMap<>();
+		known.put("world", ReadKinds.WORLD);
+		known.put("site:default", ReadKinds.SITE);
+		known.put("gw:live", ReadKinds.GATEWAY);
+		known.put("gw:old", ReadKinds.GATEWAY);
+		known.put("sw:live", ReadKinds.SWITCH);
+		known.put("port:live_3", ReadKinds.PORT);
+		known.put("port:live_0", ReadKinds.PORT);
+		known.put("cam:live", ReadKinds.CAMERA);
+		known.put("cam:backyard", ReadKinds.CAMERA);
+		return known;
+	}
+
+	private static final Set<String> DELIVERED = set("world", "site:default",
+			"gw:live", "sw:live", "port:live_3", "cam:live");
+
+	/** A complete read: every orphan takes a miss and is marked at 12. */
+	static void completeReadCountsMisses() {
+		Model m = new Model();
+		for (int i = 1; i <= 11; i++) {
+			m.cycle(devel(), DELIVERED, complete().kinds());
+		}
+		T.eq(11, m.misses.get("gw:old"), "old gateway: 11 misses");
+		T.eq(11, m.misses.get("port:live_0"), "<mac>_0 port: 11 misses");
+		T.eq(11, m.misses.get("cam:backyard"), "removed camera: 11 misses");
+		T.check(m.marked.isEmpty(), "nothing marked before 12");
+		m.cycle(devel(), DELIVERED, complete().kinds());
+		T.eq(set("gw:old", "port:live_0", "cam:backyard"), m.marked,
+				"the three orphans are marked at the 12th complete cycle");
+		T.check(!m.misses.containsKey("gw:live")
+				&& !m.misses.containsKey("world"), "delivered objects take no miss");
+	}
+
+	/**
+	 * Issue #20, review B1 on the framework: one site's stat/device failed,
+	 * so its devices are not delivered while the same kinds arrive from the
+	 * other site. No device kind is declared; nothing is counted or marked.
+	 */
+	static void failedSiteMarksNothing() {
+		ReadKinds r = new ReadKinds();
+		r.sitesRead();
+		r.site(false, true);  // site A read
+		r.site(true, false);  // site B failed (or cooling down)
+		r.gateway(true);
+		r.switchPorts(true, true, 0);
+		r.accessPointRadios(true, true, 0);
+		r.protect(true, true, 0);
+		Set<String> k = r.kinds();
+		for (String kind : NETWORK) {
+			T.check(!k.contains(kind), kind + " not read with a failed site");
+		}
+		T.check(k.contains(ReadKinds.SITE) && k.contains(ReadKinds.AGGREGATE),
+				"sites come from /self/sites, still read");
+		T.check(k.contains(ReadKinds.CAMERA), "Protect is independent of sites");
+
+		Map<String, String> known = new HashMap<>();
+		known.put("sw:siteA", ReadKinds.SWITCH);
+		known.put("sw:siteB", ReadKinds.SWITCH);
+		known.put("port:siteB_1", ReadKinds.PORT);
+		Model m = new Model();
+		for (int i = 0; i < 30; i++) m.cycle(known, set("sw:siteA"), k);
+		T.check(m.misses.isEmpty() && m.marked.isEmpty(),
+				"30 cycles with site B unread: no miss, no mark");
+	}
+
+	/** A 200 whose data is not a device list is as unread as a failure. */
+	static void siteWithNoDeviceListIsNotRead() {
+		ReadKinds r = new ReadKinds();
+		r.sitesRead();
+		r.site(false, false);
+		T.eq(set(ReadKinds.SITE, ReadKinds.AGGREGATE), r.kinds(),
+				"no device list: only site kinds");
+	}
+
+	/** Protect bootstrap failed: protect() is never called. */
+	static void protectOutageMarksNoCamera() {
+		ReadKinds r = new ReadKinds();
+		r.sitesRead();
+		r.site(false, true);
+		r.gateway(true);
+		r.switchPorts(true, true, 0);
+		r.accessPointRadios(true, true, 0);
+		Set<String> k = r.kinds();
+		T.check(!k.contains(ReadKinds.CAMERA) && !k.contains(ReadKinds.NVR),
+				"Protect outage: no camera or NVR kind");
+		T.check(k.containsAll(NETWORK), "the network read still counts");
+
+		Map<String, String> known = new HashMap<>();
+		known.put("nvr", ReadKinds.NVR);
+		known.put("cam:1", ReadKinds.CAMERA);
+		known.put("cam:2", ReadKinds.CAMERA);
+		Model m = new Model();
+		for (int i = 0; i < 30; i++) m.cycle(known, set(), k);
+		T.check(m.misses.isEmpty() && m.marked.isEmpty(),
+				"30 cycles of Protect outage: no camera counted or marked");
+	}
+
+	static void protectWithoutNvrMacKeepsCameras() {
+		ReadKinds r = new ReadKinds();
+		r.sitesRead();
+		r.protect(false, true, 0);
+		Set<String> k = r.kinds();
+		T.check(!k.contains(ReadKinds.NVR), "NVR with no MAC: NVR kind not read");
+		T.check(k.contains(ReadKinds.CAMERA), "its cameras are still read");
+	}
+
+	static void cameraListGapsAreNotRead() {
+		ReadKinds a = new ReadKinds();
+		a.sitesRead();
+		a.protect(true, false, 0);
+		T.check(!a.kinds().contains(ReadKinds.CAMERA), "cameras not a list");
+		T.check(a.kinds().contains(ReadKinds.NVR), "NVR still read");
+		ReadKinds b = new ReadKinds();
+		b.sitesRead();
+		b.protect(true, true, 1);
+		T.check(!b.kinds().contains(ReadKinds.CAMERA), "a camera with no MAC");
+	}
+
+	static void disconnectedSwitchKeepsItsPorts() {
+		ReadKinds r = complete();
+		r.switchPorts(false, true, 0); // a second switch, disconnected
+		Set<String> k = r.kinds();
+		T.check(!k.contains(ReadKinds.PORT), "a disconnected switch: no port kind");
+		T.check(k.contains(ReadKinds.SWITCH), "the switch kind is still read");
+		ReadKinds n = complete();
+		n.switchPorts(true, false, 0);
+		T.check(!n.kinds().contains(ReadKinds.PORT), "no port_table list");
+	}
+
+	static void portWithNoIndexLeavesPortsOut() {
+		ReadKinds r = complete();
+		r.switchPorts(true, true, 1);
+		T.check(!r.kinds().contains(ReadKinds.PORT), "a port with no port_idx");
+	}
+
+	static void accessPointWithoutRadioTableKeepsRadios() {
+		ReadKinds a = complete();
+		a.accessPointRadios(true, false, 0);
+		T.check(!a.kinds().contains(ReadKinds.RADIO), "no radio_table_stats");
+		ReadKinds b = complete();
+		b.accessPointRadios(false, true, 0);
+		T.check(!b.kinds().contains(ReadKinds.RADIO), "an AP not informing");
+		ReadKinds c = complete();
+		c.accessPointRadios(true, true, 1);
+		T.check(!c.kinds().contains(ReadKinds.RADIO), "a radio with no code");
+		T.check(c.kinds().contains(ReadKinds.ACCESS_POINT), "APs still read");
+	}
+
+	static void gatewayNotInformingKeepsWans() {
+		ReadKinds r = complete();
+		r.gateway(false);
+		T.check(!r.kinds().contains(ReadKinds.WAN), "gateway down: no WAN kind");
+		T.check(r.kinds().contains(ReadKinds.GATEWAY), "gateway kind still read");
+	}
+
+	static void deviceWithNoMacLeavesDevicesOut() {
+		ReadKinds r = complete();
+		r.deviceWithoutIdentity();
+		Set<String> k = r.kinds();
+		for (String kind : NETWORK) {
+			T.check(!k.contains(kind), kind + " not read with a MAC-less device");
+		}
+	}
+
+	static void noSiteListNamesNothing() {
+		ReadKinds r = new ReadKinds();
+		r.protect(true, true, 0);
+		T.check(r.kinds().isEmpty(), "no site list, nothing read");
+	}
+
+	static void worldIsExcluded() {
+		T.check(ReadKinds.EXCLUDED.contains(ReadKinds.WORLD), "world excluded");
+		T.check(!complete().kinds().contains(ReadKinds.WORLD), "world never read");
+	}
+
+	static void informingStates() {
+		T.check(ReadKinds.informing(CONNECTED), "1 informs");
+		T.check(ReadKinds.informing("4") && ReadKinds.informing("5")
+				&& ReadKinds.informing("7"), "4, 5, 7 inform");
+		T.check(!ReadKinds.informing("0"), "0 disconnected");
+		T.check(!ReadKinds.informing("6"), "6 heartbeat missed");
+		T.check(!ReadKinds.informing(null), "absent state is not trusted");
+		T.check(!ReadKinds.informing("x"), "a non-number is not trusted");
+	}
+}

@@ -21,13 +21,11 @@ bundled_content:
     - symptoms/unifi_camera_recording_enabled.yaml
     - symptoms/unifi_gateway_offline.yaml
     - symptoms/unifi_poe_budget_high.yaml
-    - symptoms/unifi_nvr_drive_bad_sectors.yaml
     - symptoms/unifi_nvr_drive_failed.yaml
     - symptoms/unifi_nvr_drive_not_healthy.yaml
     - symptoms/unifi_nvr_volume_at_risk.yaml
     - symptoms/unifi_nvr_volume_failed.yaml
-    - symptoms/unifi_nvr_volume_io_errors.yaml
-    - symptoms/unifi_nvr_volume_issue_other_than_missing_drive.yaml
+    - symptoms/unifi_nvr_volume_health_unrecognised.yaml
     - symptoms/unifi_port_is_uplink.yaml
     - symptoms/unifi_port_link_down.yaml
     - symptoms/unifi_switch_connected.yaml

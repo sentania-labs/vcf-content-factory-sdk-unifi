@@ -7,9 +7,9 @@ cancel_cycles: 3
 
 condition:
   type: property
-  key: Storage|volume_health
+  key: Storage|volume_display_health
   operator: EQ
   value: "atrisk"
 
 description: >
-  Triggers when Protect reports the NVR recording volume health as atrisk (Storage|volume_health). Volume fullness is deliberately not considered.
+  Triggers when the NVR volume health is atrisk (Storage|volume_display_health), the health Protect's storage page displays. Volume fullness is deliberately not considered.

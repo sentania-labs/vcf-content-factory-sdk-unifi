@@ -7,9 +7,9 @@ cancel_cycles: 3
 
 condition:
   type: property
-  key: Storage|volume_health
+  key: Storage|volume_display_health
   operator: EQ
   value: "failed"
 
 description: >
-  Triggers when Protect reports the NVR recording volume health as failed (Storage|volume_health).
+  Triggers when the NVR volume health is failed (Storage|volume_display_health), the health Protect's storage page displays.

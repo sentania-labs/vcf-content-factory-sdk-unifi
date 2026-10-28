@@ -1,6 +1,6 @@
 name: "[VCF Content Factory] UniFi Investigate NVR Storage At Risk"
 description: |
-  UniFi Protect reports that the NVR recording volume or one of its drives is failed, at risk or not healthy, or that the volume is logging I/O errors.
+  UniFi Protect reports that the NVR recording volume or one of its drives is failed or at risk, that its health value is not one this pak recognises, or that a drive is failed or not healthy.
 
   Open UniFi Protect, go to Settings > Storage, and check the status of each drive and of the volume. Replace the drive in the slot that Protect names.
 

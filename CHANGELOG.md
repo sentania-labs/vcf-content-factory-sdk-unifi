@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.0.0.19 (Unreleased)
+
+Dev preview build 19 (`build-sdk` stamps 0.0.0.19); the 1.1.0 release line
+is unchanged until a `v1.1.0.19` tag. Design: knowledge/designs/alerts/unifi-nvr-storage-at-risk.md
+in the factory.
+
+- feat(adapter): build 19: **the NVR publishes Protect's own storage health, so the pak can alert on drive and volume health instead of fullness** (Protect fills the volume to its retention limit by design; devel reads 99.1 % and that is normal). Read from the bootstrap's `nvr.systemInfo.ustorage` (the same block UniFi OS serves at `/api/system`), present-only and verbatim, by the new `NvrStorageHealth` (no SDK dependency). Volume (the `primary` space, else the only non-root, non-swap one, as the UniFi OS storage page picks it): `Storage|volume_health` (`health`, `atrisk`, `failed`), `Storage|volume_issues` (`reasons[]` as `type:level` in Protect's order, `none` for an empty list), `Storage|volume_action`, `Storage|volume_device`. Drives (`disks[]`, published only when every entry has a `state` and `slot`; empty bays, `nodisk`, are not drives): `Storage|drive_count`, `Storage|drives_not_healthy` (states the storage page colours orange or red, a `health` of `at_risk`/`broken`, or a risk `reason`; an unknown state counts, so it is surfaced, never passed), `Storage|drives_failed` (red only: `broken`, `faulty`, `not_support`), `Storage|unhealthy_drive_slot` / `Storage|unhealthy_drive_state` (the lowest-slot unhealthy drive, `none` when none), `Storage|drive_bad_sectors` (sum of `bad_sector`, only when every drive carries it). Also `Storage|hard_drive_state`, Protect's `nvr.hardDriveState` verbatim (vocabulary unknown, so informational). Flattened on the NVR, not per-drive child objects: consoles hold 1 to 7 bays, and the counts plus the first unhealthy slot and state carry an actionable alert. Vocabulary from the live devel bootstrap (UDM Pro, Protect 7.3.70, 2026-10-28) and the UniFi OS web UI's storage schema and status maps; redacted shape in knowledge/context/api-maps/unifi-network-api.md (Protect section) in the factory. Devel publishes `volume_health` `atrisk`, `volume_issues` `io_err:atrisk`, one drive in slot 1 `normal`, 0 bad sectors, `hard_drive_state` `hddNotCompatible` (checked offline against the captured bootstrap). No symptoms or alerts in this entry; they are authored next. Tests: NvrStorageHealthTest, tests/test_build19_storage_health.py.
+
 ## 0.0.0.18 (Unreleased)
 
 Dev preview build 18 (`build-sdk` stamps 0.0.0.18); the 1.1.0 release line

@@ -97,6 +97,19 @@ as a value (review of build 16):
   only when the controller sends their field; before, a missing field read
   `false` (or `Half`), which the alerts would act on.
 
+Build 19 adds the NVR's storage health, as Protect reports it, on the NVR
+(`Storage|...`, present-only, values verbatim): the recording volume's
+`volume_health` (`health`, `atrisk`, `failed`), `volume_issues` (Protect's
+reasons as `type:level`, such as `io_err:atrisk`; `none` for an empty
+list), `volume_action` and `volume_device`; the drive counts `drive_count`,
+`drives_not_healthy` and `drives_failed`, with the lowest-slot unhealthy
+drive's `unhealthy_drive_slot` and `unhealthy_drive_state` (`none` when no
+drive is unhealthy) and `drive_bad_sectors`; and Protect's NVR-level
+`hard_drive_state`. "Not healthy" and "failed" follow the UniFi OS storage
+page's own colours (orange and red). Alert on these, not on
+`Storage|usage_pct`: Protect fills the volume to its retention limit by
+design, so a full volume is normal.
+
 ### Alerts
 
 Build 16 (issue #30) bundles eight alerts, fourteen symptoms (twelve before build 17) and six

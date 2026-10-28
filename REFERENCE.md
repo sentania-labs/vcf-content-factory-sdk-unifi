@@ -382,6 +382,17 @@ Generated from `describe.xml` and `resources.properties` for build 18 (dev 0.0.0
 | `total_bytes` | Total | metric | bytes | yes |
 | `usage_pct` | Usage % | metric | % | yes |
 | `source` | Source | property | - | - |
+| `volume_health` | Volume Health | property | - | - |
+| `volume_issues` | Volume Issues | property | - | - |
+| `volume_action` | Volume Action | property | - | - |
+| `volume_device` | Volume Device | property | - | - |
+| `drive_count` | Drives | metric | - | yes |
+| `drives_not_healthy` | Drives Not Healthy | metric | - | yes |
+| `drives_failed` | Drives Failed | metric | - | yes |
+| `unhealthy_drive_slot` | First Unhealthy Drive Slot | property | - | - |
+| `unhealthy_drive_state` | First Unhealthy Drive State | property | - | - |
+| `drive_bad_sectors` | Drive Bad Sectors | metric | - | yes |
+| `hard_drive_state` | Hard Drive State | property | - | - |
 
 > Build 18 (issue #39): bytes, from the Protect bootstrap's
 > `nvr.systemInfo.storage` (`size`, `used`: the recording volume; on the
@@ -400,6 +411,49 @@ Generated from `describe.xml` and `resources.properties` for build 18 (dev 0.0.0
 > send, so the three never published. Protect fills the volume and then
 > recycles the oldest footage, so a usage near 100 % is normal for a
 > recording NVR (devel: 99.1 %).
+
+> Build 19: **storage health**, from the bootstrap's `nvr.systemInfo.ustorage`
+> (the same block UniFi OS serves at `/api/system` as `ustorage`), values
+> verbatim and each only when Protect sends it. The volume is the
+> `space[]` entry with `space_type` `primary`, else the only one that is
+> neither `root` nor `swap` (the UniFi OS storage page's choice); nothing is
+> published when there is no such one. `volume_health` is its `health`:
+> `health` (Protect's word for healthy; the UI also accepts `healthy`),
+> `atrisk` (UI: "Storage At Risk of Failure", orange) or `failed` ("Storage
+> has Failed", red). `volume_issues` is its `reasons[]` as `type:level`,
+> comma separated in Protect's order; the UI's types are `disk_atrisk`,
+> `disk_failed`, `space_degrade`, `space_failed`, `space_ro`,
+> `lacking_disk`, `io_err`, `raid_bad_blocks`; `none` when the list is
+> empty. A reason's `slot` is not published: on devel it reads 0 while the
+> only drive is in slot 1. The UI shows a primary volume as healthy when
+> its only reason is `lacking_disk:atrisk` and its RAID reports fewer members
+> than expected, or no RAID block (Protect's bootstrap sends none); the published `volume_health` stays `atrisk` there, so
+> an alert on `atrisk` leaves that case out through `volume_issues`.
+> `volume_action` is `none`, `syncing`, `repairing`, `expanding`,
+> `formatting`, `erasing`, `checking` or `scanning`.
+>
+> The drive values come from `disks[]` and are published together, and
+> only when every entry has a `state` and a `slot` (a count over a list
+> the pack cannot read in full would vouch for a drive it never saw). An
+> empty bay (`state` `nodisk`) is not a drive. `drives_not_healthy` counts
+> the drives the UniFi OS storage page shows orange or red: state `risk`,
+> `spare_at_risk`, `foreign`, `repairing`, `incompatible`, `broken`,
+> `faulty` or `not_support`, or a `health` of `at_risk` or `broken`, or a
+> `reason` naming a risk (`abnormal_smart`, `too_many_read_error`,
+> `too_many_bad_sectors`, `too_short_life_span`, `too_many_unc_count`,
+> `too_many_get_smart_error`, `investigation_needed`); a state this pack
+> does not know also counts, so it is surfaced, never passed. Green or
+> neutral: `normal`, `spare`, `initializing`, `expanding`, `probing`.
+> `drives_failed` counts the red ones only (`broken`, `faulty`,
+> `not_support`, or `health` `broken`). `unhealthy_drive_slot` and
+> `unhealthy_drive_state` name the lowest-slot unhealthy drive, verbatim,
+> and read `none` when none is. `drive_bad_sectors` is the sum of
+> `bad_sector` over the drives, only when every drive carries it. The
+> drive's own `healthy` field (`good` on devel) is not used: its other
+> values are not known. `hard_drive_state` is Protect's NVR-level
+> `hardDriveState`, verbatim (`hddNotCompatible` on devel, whose only
+> drive reads state `normal`); its meaning and vocabulary are not
+> known, so no alert reads it.
 
 #### Configuration
 

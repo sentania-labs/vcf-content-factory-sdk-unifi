@@ -1602,6 +1602,7 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 			metric(out, "Storage|usage_pct", (storage.used / storage.total) * 100.0);
 			prop(out, "Storage|source", storage.source);
 		}
+		collectNvrStorageHealth(nvr, out);
 
 		prop(out, "Configuration|model", nvr.get("modelKey").asString(""));
 		prop(out, "Configuration|firmware", nvr.get("firmwareVersion").asString(""));
@@ -1623,6 +1624,90 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 			if (UniFiIds.mac(cam.get("mac").asString()) != null) cameraCount++;
 		}
 		prop(out, "Configuration|camera_count", String.valueOf(cameraCount));
+	}
+
+	/**
+	 * Build 19: Protect's own storage health for the NVR, from
+	 * {@code nvr.systemInfo.ustorage} in the bootstrap, verbatim and only
+	 * when present (see {@link NvrStorageHealth}). Fullness is not health:
+	 * Protect fills the volume to its retention limit by design, so these
+	 * are what the bundled storage alerts read, never usage_pct.
+	 */
+	private static void collectNvrStorageHealth(SimpleJson nvr, List<MetricData> out) {
+		textPropIfPresent(out, "Storage|hard_drive_state", nvr.get("hardDriveState"));
+		SimpleJson ustorage = nvr.get("systemInfo").get("ustorage");
+		if (ustorage.isNull()) return;
+
+		SimpleJson spaceList = ustorage.get("space");
+		if (spaceList.isList()) {
+			List<NvrStorageHealth.Space> spaces = new ArrayList<>();
+			for (SimpleJson sp : spaceList.asList()) {
+				List<String> reasons = null;
+				SimpleJson rs = sp.get("reasons");
+				if (rs.isList()) {
+					reasons = new ArrayList<>();
+					for (SimpleJson r : rs.asList()) {
+						reasons.add(NvrStorageHealth.reason(
+								UniFiValues.text(r.get("type").asString()),
+								UniFiValues.text(r.get("level").asString())));
+					}
+				}
+				spaces.add(new NvrStorageHealth.Space(
+						UniFiValues.text(sp.get("space_type").asString()),
+						UniFiValues.text(sp.get("device").asString()),
+						UniFiValues.text(sp.get("health").asString()),
+						UniFiValues.text(sp.get("action").asString()),
+						reasons));
+			}
+			NvrStorageHealth.Space vol = NvrStorageHealth.primary(spaces);
+			if (vol != null) {
+				if (vol.health != null) prop(out, "Storage|volume_health", vol.health);
+				if (vol.action != null) prop(out, "Storage|volume_action", vol.action);
+				if (vol.device != null) prop(out, "Storage|volume_device", vol.device);
+				String issues = NvrStorageHealth.issues(vol);
+				if (issues != null) prop(out, "Storage|volume_issues", issues);
+			}
+		}
+
+		SimpleJson diskList = ustorage.get("disks");
+		if (diskList.isList()) {
+			List<NvrStorageHealth.Disk> disks = new ArrayList<>();
+			for (SimpleJson d : diskList.asList()) {
+				disks.add(new NvrStorageHealth.Disk(
+						UniFiValues.number(d.get("slot").asString()),
+						UniFiValues.text(d.get("state").asString()),
+						UniFiValues.text(d.get("health").asString()),
+						diskReasons(d.get("reason")),
+						UniFiValues.number(d.get("bad_sector").asString())));
+			}
+			NvrStorageHealth.Drives drives = NvrStorageHealth.drives(disks);
+			if (drives != null) {
+				metric(out, "Storage|drive_count", drives.count);
+				metric(out, "Storage|drives_not_healthy", drives.notHealthy);
+				metric(out, "Storage|drives_failed", drives.failed);
+				prop(out, "Storage|unhealthy_drive_slot", drives.firstSlot);
+				prop(out, "Storage|unhealthy_drive_state", drives.firstState);
+				metricIfPresent(out, "Storage|drive_bad_sectors", drives.badSectors);
+			}
+		}
+	}
+
+	/**
+	 * A drive's {@code reason}: a string, an object with {@code type}, or a
+	 * list of either (the shapes the UniFi OS storage page accepts). Empty
+	 * when absent.
+	 */
+	private static List<String> diskReasons(SimpleJson reason) {
+		List<String> names = new ArrayList<>();
+		if (reason.isNull()) return names;
+		List<SimpleJson> items = reason.isList() ? reason.asList()
+				: java.util.Collections.singletonList(reason);
+		for (SimpleJson r : items) {
+			String name = r.isObject() ? UniFiValues.text(r.get("type").asString())
+					: UniFiValues.text(r.asString());
+			if (name != null) names.add(name);
+		}
+		return names;
 	}
 
 	private void collectCamera(ResourceConfig rc, Snapshot s, List<MetricData> out) {

@@ -384,6 +384,31 @@
 				<!-- Build 18 review N3: which pair fed the three metrics,
 				     systemInfo (the volume) or recordingSpace (Protect's share). -->
 				<ResourceAttribute key="source" nameKey="245" dataType="string" isProperty="true"/>
+				<!-- Build 19: Protect's own storage health, from the bootstrap's
+				     nvr.systemInfo.ustorage, verbatim and present-only. The recording
+				     volume (space_type primary): health is "health" (Protect's word
+				     for healthy), "atrisk" or "failed"; issues lists the reasons as
+				     type:level ("io_err:atrisk"), "none" for an empty list. Drives:
+				     counts over every listed drive (empty bays left out), "not
+				     healthy" as the UniFi OS storage page colours a drive orange or
+				     red, "failed" red only; the first such drive by slot, "none"
+				     when there is none. hard_drive_state is Protect's NVR-level
+				     hardDriveState, verbatim. -->
+				<ResourceAttribute key="volume_health" nameKey="246" dataType="string" isProperty="true"/>
+				<ResourceAttribute key="volume_issues" nameKey="247" dataType="string" isProperty="true"/>
+				<ResourceAttribute key="volume_action" nameKey="248" dataType="string" isProperty="true"/>
+				<ResourceAttribute key="volume_device" nameKey="249" dataType="string" isProperty="true"/>
+				<ResourceAttribute key="drive_count" nameKey="300" dataType="float"
+				                   isProperty="false" defaultMonitored="true"/>
+				<ResourceAttribute key="drives_not_healthy" nameKey="301" dataType="float"
+				                   isProperty="false" defaultMonitored="true"/>
+				<ResourceAttribute key="drives_failed" nameKey="302" dataType="float"
+				                   isProperty="false" defaultMonitored="true"/>
+				<ResourceAttribute key="unhealthy_drive_slot" nameKey="303" dataType="string" isProperty="true"/>
+				<ResourceAttribute key="unhealthy_drive_state" nameKey="304" dataType="string" isProperty="true"/>
+				<ResourceAttribute key="drive_bad_sectors" nameKey="305" dataType="float"
+				                   isProperty="false" defaultMonitored="true"/>
+				<ResourceAttribute key="hard_drive_state" nameKey="306" dataType="string" isProperty="true"/>
 			</ResourceGroup>
 
 			<ResourceGroup key="Configuration" nameKey="238" instanced="false">

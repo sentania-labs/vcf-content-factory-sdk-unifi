@@ -564,6 +564,21 @@ back is registered again by discovery; that path is not yet seen live
 (framework note, `knowledge/context/sdk/vanished_object_lifecycle.md` in the
 factory).
 
+### Relationships when a read fails
+
+Build 18 (issue #20): a relationship is never removed because one read
+failed. VCF Operations replaces a parent's children only when the pack
+sends that parent; a parent not sent keeps what it had. A site whose device
+list could not be read is not sent (build 14). The NVR's site (the first
+site) is not sent on a cycle where Protect was not read, so the Site > NVR
+edge stays; this holds for at most 12 consecutive cycles without Protect,
+and only while VCF Operations holds a UniFi NVR for the instance. The NVR
+is sent with its cameras only on a cycle that read Protect, so NVR > Camera
+edges stay through an outage. The vmnic stitch's HostSystem > Switch Port
+edges are only ever added, never replaced, so a cycle without the Suite API
+removes none of them. The cost of this rule: a relationship that really
+changed during such a cycle shows on the next good one.
+
 ---
 
 ## Alerts

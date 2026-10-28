@@ -160,6 +160,12 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 	private volatile ReadRecord lastRead;
 
 	/**
+	 * Issue #20, second half: whether a cycle without Protect leaves the
+	 * NVR's site out of the relationships ({@link ProtectEdgeHold}).
+	 */
+	private final ProtectEdgeHold protectEdgeHold = new ProtectEdgeHold();
+
+	/**
 	 * Build 18 review N2: closes the streak of any warning that did not
 	 * recur in the cycle just ended, so a later failure warns again.
 	 */
@@ -1600,6 +1606,14 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 	private Relationships buildRelationships(Snapshot s) {
 		RelationshipBuilder rb = new RelationshipBuilder(ADAPTER_KIND);
 
+		// Issue #20, second half: a cycle that did not read Protect does not
+		// publish the NVR's site (the first site), whose full child set would
+		// drop the Site > NVR edge until Protect is read again. See
+		// ProtectEdgeHold.
+		String nvrSite = s.sites.get("data").size() > 0
+				? s.sites.get("data").get(0).get("name").asString() : null;
+		boolean holdNvrSite = holdNvrSite(s, nvrSite);
+
 		ResourceKey world = rb.resource("UniFiWorld", "UniFi World",
 				"world_id", "unifi_world");
 
@@ -1614,6 +1628,11 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 			// parent here (full-set would drop its device edges); see
 			// SiteIsolation.emitsChildren.
 			if (!SiteIsolation.emitsChildren(s.failedSites, siteName)) {
+				continue;
+			}
+			// Issue #20: the same for the NVR's site on a cycle without
+			// Protect; its edges are kept as they are.
+			if (holdNvrSite && siteName != null && siteName.equals(nvrSite)) {
 				continue;
 			}
 
@@ -1747,6 +1766,60 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 				+ "WirelessAggregate, NVR>Camera} tree"
 				+ (stitcher != null ? " + vmnic→port stitch" : ""));
 		return rb.build();
+	}
+
+	/**
+	 * Issue #20, second half: whether this cycle leaves the NVR's site out
+	 * of the relationships ({@link ProtectEdgeHold}). Protect counts as read
+	 * when the bootstrap arrived with an NVR that has a MAC, the only case
+	 * in which the Site &gt; NVR edge can be built. Logs at INFO when a hold
+	 * starts and at WARN when the grace period has passed, once per streak.
+	 */
+	private boolean holdNvrSite(Snapshot s, String nvrSite) {
+		boolean protectRead = s.protect != null
+				&& UniFiIds.mac(s.protect.get("nvr").get("mac").asString()) != null;
+		ProtectEdgeHold.Decision d = protectEdgeHold.cycle(protectRead,
+				protectRead ? null : platformKnowsNvr());
+		int n = protectEdgeHold.unreadCycles();
+		if (d == ProtectEdgeHold.Decision.HOLD && n == 1) {
+			logInfo("Relationships: Protect was not read this cycle; site "
+					+ nvrSite + " keeps its relationships, NVR edge included, "
+					+ "until Protect is read again (at most "
+					+ ProtectEdgeHold.GRACE_CYCLES + " cycles)");
+		} else if (d == ProtectEdgeHold.Decision.EXPIRED
+				&& n == ProtectEdgeHold.GRACE_CYCLES + 1) {
+			logWarn("Relationships: Protect not read for "
+					+ ProtectEdgeHold.GRACE_CYCLES + " cycles; site " + nvrSite
+					+ " is published again without its NVR edge");
+		}
+		return d == ProtectEdgeHold.Decision.HOLD && nvrSite != null;
+	}
+
+	/**
+	 * Issue #20: whether the platform holds a UniFi NVR for this adapter
+	 * instance (monitoring or stopped), from the SDK's {@code adapterCache};
+	 * {@code null} when that cannot be read.
+	 */
+	private Boolean platformKnowsNvr() {
+		try {
+			com.integrien.alive.common.adapter3.AdapterCache cache = adapterCache;
+			if (cache == null) return null;
+			List<ResourceConfig> known = new ArrayList<>();
+			if (cache.getMonitoringResources() != null) {
+				known.addAll(cache.getMonitoringResources());
+			}
+			if (cache.getStoppedResources() != null) {
+				known.addAll(cache.getStoppedResources());
+			}
+			for (ResourceConfig rc : known) {
+				if (rc != null && ReadKinds.NVR.equalsIgnoreCase(rc.getResourceKind())) {
+					return Boolean.TRUE;
+				}
+			}
+			return Boolean.FALSE;
+		} catch (RuntimeException e) {
+			return null;
+		}
 	}
 
 	/**

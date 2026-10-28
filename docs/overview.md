@@ -297,6 +297,12 @@ logged at debug only, never WARN spam.
   it touches. The first upgrade marks every leftover from older builds
   (see README, Upgrading to build 18). Rule: REFERENCE.md, Removed objects.
 
+- **A failed read does not drop relationships** (build 18, issue #20). On a
+  cycle without Protect the NVR's site keeps its edges, NVR included, for
+  up to 12 cycles; NVR > Camera edges and the vmnic stitch edges are kept
+  through Protect and Suite API outages. Details: REFERENCE.md,
+  Relationships when a read fails.
+
 ### Device state codes
 
 The UniFi device `state` field (`stat/device`), as this pack reads it for

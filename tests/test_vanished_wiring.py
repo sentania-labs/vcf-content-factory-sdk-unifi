@@ -6,7 +6,12 @@ ReadKindsTest). This checks the adapter feeds it from the same walk that
 registers the resources: every site's read, every registered device's state
 and child table, the Protect bootstrap only inside the branch that has one,
 and that kindsReadThisCycle answers only for the enumeration that just ran
-on this thread. Stdlib only; ci/run_java_tests.sh runs it.
+on this thread. Second half of #20: buildRelationships leaves the NVR's
+site out on a cycle without Protect (ProtectEdgeHold, unit-tested in
+ProtectEdgeHoldTest), the NVR is a parent only on a cycle that read
+Protect, and the vmnic stitch is only ever added to (foreign parent), so a
+Suite API blip publishes nothing that could remove its edges. Stdlib only;
+ci/run_java_tests.sh runs it.
 """
 import pathlib
 import re
@@ -65,9 +70,51 @@ def enumeration():
     assert "camerasNoMac++;" in enum
 
 
+def relationships():
+    rel = method_body("Relationships", "buildRelationships")
+    # The hold is decided once, before the site loop.
+    assert rel.count("holdNvrSite(s, nvrSite)") == 1
+    assert rel.index("holdNvrSite(s, nvrSite)") < rel.index("for (SimpleJson site :")
+    # A held site still hangs under the World, and is skipped before any of
+    # its children go into the builder (no reduced full set).
+    loop = rel[rel.index("for (SimpleJson site :"):rel.index("// Protect: NVR")]
+    held = loop.index("if (holdNvrSite && siteName != null && siteName.equals(nvrSite)) {")
+    assert loop.index("rb.parent(world, siteKey);") < held
+    assert held < loop.index("SimpleJson devices = s.devicesForSite(siteName);")
+    assert held < loop.index("rb.parent(siteKey, rb.resource(\"UniFiWirelessAggregate\"")
+    # The NVR is a parent (and the site's NVR child) only inside the Protect
+    # branch, so a cycle without Protect sends no set for it.
+    protect = rel[rel.index("if (s.protect != null) {"):rel.index("emitVmnicHostStitch(rb, s);")]
+    assert "rb.parent(siteKey, nvrKey);" in protect
+    assert "rb.parent(nvrKey," in protect
+    outside = rel.replace(protect, "")
+    assert "nvrKey" not in outside, "NVR edges built outside the Protect branch"
+    hold = method_body("boolean", "holdNvrSite")
+    assert "protectEdgeHold.cycle(protectRead," in hold
+    assert 'UniFiIds.mac(s.protect.get("nvr").get("mac").asString()) != null' in hold
+    assert "protectRead ? null : platformKnowsNvr()" in hold
+    knows = method_body("Boolean", "platformKnowsNvr")
+    assert "getMonitoringResources()" in knows and "getStoppedResources()" in knows
+    assert "catch (RuntimeException e) {\n\t\t\treturn null;" in knows
+
+
+def stitch():
+    # The stitch hangs ports under foreign HostSystems only: the framework
+    # sends a foreign parent as addRelationships (never clear-first,
+    # framework RelationshipBuilderTest), so a cycle with no stitch removes
+    # nothing. A parent() or childForeign() here would be a full set.
+    body = method_body("void", "emitVmnicHostStitch")
+    assert "rb.parentForeign(e.hostKey, portRk);" in body
+    assert "rb.parent(" not in body and "rb.childForeign(" not in body
+    assert SRC.count("rb.parentForeign(") == 1
+    assert "rb.childForeign(" not in SRC
+
+
 def main():
     hooks()
     enumeration()
+    relationships()
+    stitch()
     print("test_vanished_wiring: all assertions passed")
 
 

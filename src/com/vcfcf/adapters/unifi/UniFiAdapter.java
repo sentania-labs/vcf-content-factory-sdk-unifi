@@ -143,6 +143,10 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 	private final Set<String> loggedUplinkFallbacks =
 			java.util.concurrent.ConcurrentHashMap.newKeySet();
 
+	/** Build 18 (#27 item 4): renameIfChanged warns once, not per resource. */
+	private final java.util.concurrent.atomic.AtomicBoolean renameLookupFailed =
+			new java.util.concurrent.atomic.AtomicBoolean();
+
 	/**
 	 * Per-cycle snapshot of the UniFi API responses, shared across all
 	 * per-resource {@code collect()} calls within one collection cycle, lives in
@@ -553,8 +557,14 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 	@Override
 	protected void enumerateResources(ResourceSink sink)
 			throws InterruptedException, Exception {
+		// Build 18 (#27 item 4): every resource is looked up by key first,
+		// so the SDK records a changed name (renameIfChanged).
+		ResourceSink out = rc -> {
+			renameIfChanged(rc);
+			sink.accept(rc);
+		};
 		Snapshot s = currentSnapshot();
-		sink.accept(rcOf("UniFiWorld", "UniFi World", "world_id", "unifi_world"));
+		out.accept(rcOf("UniFiWorld", "UniFi World", "world_id", "unifi_world"));
 
 		int sites = 0, gateways = 0, switches = 0, ports = 0, aps = 0,
 				radios = 0, wans = 0, aggregates = 0, cameras = 0, nvrs = 0;
@@ -562,7 +572,7 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		for (SimpleJson site : s.sites.get("data").asList()) {
 			String siteName = site.get("name").asString();
 			String siteDesc = site.get("desc").asString(siteName);
-			sink.accept(rcOf("UniFiSite", siteDesc, "site_name", siteName));
+			out.accept(rcOf("UniFiSite", siteDesc, "site_name", siteName));
 			sites++;
 
 			for (SimpleJson dev : s.devicesForSite(siteName).get("data").asList()) {
@@ -578,43 +588,43 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 				String name = deviceDisplayName(dev);
 
 				if (isGateway(type)) {
-					sink.accept(rcOf("UniFiGateway", name, "mac", mac));
+					out.accept(rcOf("UniFiGateway", name, "mac", mac));
 					gateways++;
 					if (!dev.get("wan1").isNull()) {
-						sink.accept(rcOf("UniFiWanInterface",
+						out.accept(rcOf("UniFiWanInterface",
 								UniFiIds.childName("WAN 1", name),
 								"wan_name", mac + "_wan1"));
 						wans++;
 					}
 					if (!dev.get("wan2").isNull()) {
-						sink.accept(rcOf("UniFiWanInterface",
+						out.accept(rcOf("UniFiWanInterface",
 								UniFiIds.childName("WAN 2", name),
 								"wan_name", mac + "_wan2"));
 						wans++;
 					}
 				} else if ("usw".equals(type)) {
-					sink.accept(rcOf("UniFiSwitch", name, "mac", mac));
+					out.accept(rcOf("UniFiSwitch", name, "mac", mac));
 					switches++;
 					SimpleJson portTable = dev.get("port_table");
 					if (!portTable.isNull()) {
 						for (SimpleJson port : portTable.asList()) {
 							Integer idx = portIdx(port);
 							if (idx == null) continue; // #23: never <mac>_0
-							sink.accept(rcOf("UniFiSwitchPort",
+							out.accept(rcOf("UniFiSwitchPort",
 									UniFiIds.childName(portDisplayName(port, idx), name),
 									"port_key", mac + "_" + idx));
 							ports++;
 						}
 					}
 				} else if ("uap".equals(type)) {
-					sink.accept(rcOf("UniFiAccessPoint", name, "mac", mac));
+					out.accept(rcOf("UniFiAccessPoint", name, "mac", mac));
 					aps++;
 					SimpleJson radioStats = dev.get("radio_table_stats");
 					if (!radioStats.isNull()) {
 						for (SimpleJson radio : radioStats.asList()) {
 							String radioCode = radioCode(radio);
 							if (radioCode == null) continue; // peer review 7
-							sink.accept(rcOf("UniFiRadio",
+							out.accept(rcOf("UniFiRadio",
 									UniFiIds.childName(radioDisplayName(radioCode), name),
 									"radio_key", mac + "_" + radioCode));
 							radios++;
@@ -623,7 +633,7 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 				}
 			}
 
-			sink.accept(rcOf("UniFiWirelessAggregate",
+			out.accept(rcOf("UniFiWirelessAggregate",
 					UniFiIds.childName("Wireless Summary", siteDesc),
 					"aggregate_id", siteName + "_wlan_aggregate"));
 			aggregates++;
@@ -637,7 +647,7 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 				// not registered; its cameras still are (their own MAC).
 				String nvrMac = UniFiIds.mac(nvr.get("mac").asString());
 				if (nvrMac != null) {
-					sink.accept(rcOf("UniFiNvr", nvr.get("name").asString("NVR"),
+					out.accept(rcOf("UniFiNvr", nvr.get("name").asString("NVR"),
 							"nvr_mac", nvrMac));
 					nvrs++;
 				}
@@ -646,7 +656,7 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 					for (SimpleJson cam : cams.asList()) {
 						String camMac = UniFiIds.mac(cam.get("mac").asString());
 						if (camMac == null) continue; // #23
-						sink.accept(rcOf("UniFiCamera",
+						out.accept(rcOf("UniFiCamera",
 								cam.get("name").asString(camMac),
 								"camera_mac", camMac));
 						cameras++;
@@ -660,6 +670,45 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 				+ " switches, " + ports + " ports, " + aps + " aps, "
 				+ radios + " radios, " + aggregates + " aggregates, "
 				+ nvrs + " nvr, " + cameras + " cameras");
+	}
+
+	/**
+	 * Build 18 (#27 item 4): a known object takes the name the adapter now
+	 * reports, as Broadcom's own adapters do. javap of the devel appliance's
+	 * plugins, 2026-10-28: vSphere {@code VMwareAdapter} and vSAN {@code
+	 * VsanStorageAdapter} return {@code true} here; NSX-T {@code
+	 * NSXTAdapter} and the vim {@code ManagementAdapter} return {@code true}
+	 * per resource for their own adapter kinds. The SDK default is {@code
+	 * false}: VCF Operations then keeps the first name forever. With it on,
+	 * the parent-qualified names reach objects that existed before build
+	 * 18, and a device or site renamed on the controller is renamed in VCF
+	 * Operations. Identity is untouched: the SDK only carries a new name, and
+	 * new values for non-unique identifiers, which this pack does not have.
+	 */
+	@Override
+	public boolean isResourceRenameAllowed() {
+		return true;
+	}
+
+	/**
+	 * Build 18 (#27 item 4): the SDK compares a resource's reported name with
+	 * the stored one only inside {@code getMonitoringResource(ResourceKey)},
+	 * and sends the new name with the cycle's result
+	 * ({@code finalizeCollectResult}). The framework registers resources with
+	 * {@code CollectResult.addNewResource}, which never makes that
+	 * comparison, so each enumerated key is looked up here. A new resource
+	 * (not yet in the cache) is a no-op; a failed lookup costs only the
+	 * rename, logged once.
+	 */
+	private void renameIfChanged(ResourceConfig rc) {
+		try {
+			getMonitoringResource(rc.getResourceKey());
+		} catch (RuntimeException e) {
+			if (renameLookupFailed.compareAndSet(false, true)) {
+				logWarn("Resource rename lookup failed (names may stay as "
+						+ "first discovered; collection unaffected): " + e);
+			}
+		}
 	}
 
 	private ResourceConfig rcOf(String kind, String name, String idKey, String idValue) {

@@ -504,12 +504,12 @@ example vSAN "Storage Pool (<host>)"): switch ports `Port 3 (<switch>)` (or
 radios `5 GHz (<access point>)`, and `Wireless Summary (<site>)`. The
 parent's name is its display name (a device's name, or model and MAC tail
 when it has none; a site's description). Only the name changes, never the
-identifier, so an object keeps its history. Per the adapter SDK, VCF
-Operations keeps the name of an object it already has unless the adapter
-opts into renames (`isResourceRenameAllowed`, off by default), and this
-pack does not, so objects discovered before build 18 are expected to keep
-their old names and objects discovered from build 18 on get the new ones
-(see CHANGELOG, build 18; not yet seen on an upgraded instance).
+identifier, so an object keeps its history. The pack opts into renames
+(`isResourceRenameAllowed()` returns `true`, as Broadcom's vSphere and vSAN
+adapters do; the SDK default is `false`), so objects discovered before
+build 18 take the new names, and a device or site renamed on the controller
+is renamed in VCF Operations on the next cycle (see CHANGELOG, build 18;
+not yet seen on an upgraded instance).
 
 ---
 

@@ -94,6 +94,19 @@ def names():
     assert "aliases.add(portName);" in idx, "join aliases stay bare labels"
 
 
+def rename_opt_in():
+    m = re.search(r"public boolean isResourceRenameAllowed\(\)\s*\{\s*return true;\s*\}", SRC)
+    assert m, "isResourceRenameAllowed() must return true (Broadcom's vSphere/vSAN do)"
+    assert "isResourceRenameAllowed(ResourceKey" not in SRC, "no per-key override"
+    helper = method_body("void", "renameIfChanged")
+    assert "getMonitoringResource(rc.getResourceKey());" in helper
+    enum = method_body("void", "enumerateResources")
+    assert enum.count("sink.accept(") == 1, "only the wrapper may call sink directly"
+    wrapper = enum[enum.index("ResourceSink out = rc -> {"):enum.index("};")]
+    assert wrapper.index("renameIfChanged(rc);") < wrapper.index("sink.accept(rc);")
+    assert enum.count("out.accept(rcOf(") == 12, enum.count("out.accept(rcOf(")
+
+
 def test_connection():
     assert "UniFiFailures.unifiOsRequired(e)" in SRC
 
@@ -102,6 +115,7 @@ def main():
     nvr_storage()
     uplink_tree()
     names()
+    rename_opt_in()
     test_connection()
     print("test_build18_wiring: all assertions passed")
 

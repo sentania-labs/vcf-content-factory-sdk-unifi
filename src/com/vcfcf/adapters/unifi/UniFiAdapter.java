@@ -629,7 +629,10 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		};
 		Snapshot s = currentSnapshot();
 		out.accept(rcOf("UniFiWorld", "UniFi World", "world_id", "unifi_world"));
-		read.sitesRead(); // Snapshot.build throws without a site list
+		// Snapshot.build throws without a site list; an empty one declares
+		// nothing (review R2-B1: World is always delivered, so the
+		// framework's "delivered nothing" guard would not catch it).
+		read.sitesRead(s.sites.get("data").asList().size());
 
 		int sites = 0, gateways = 0, switches = 0, ports = 0, aps = 0,
 				radios = 0, wans = 0, aggregates = 0, cameras = 0, nvrs = 0;
@@ -640,11 +643,17 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 			out.accept(rcOf("UniFiSite", siteDesc, "site_name", siteName));
 			sites++;
 
-			SimpleJson siteDevices = s.devicesForSite(siteName).get("data");
+			SimpleJson sitePayload = s.devicesForSite(siteName);
+			SimpleJson siteDevices = sitePayload.get("data");
 			read.site(s.failedSites.containsKey(siteName),
-					s.devicesBySite.containsKey(siteName) && siteDevices.isList());
+					s.devicesBySite.containsKey(siteName) && siteDevices.isList(),
+					ReadKinds.rcOk(sitePayload.get("meta").get("rc").asString("")));
 			for (SimpleJson dev : siteDevices.asList()) {
 				String type = dev.get("type").asString("");
+				// Review R2-N2: a record with no type could have been a
+				// gateway, switch or AP; like a MAC-less one, no device
+				// kind is complete this cycle.
+				if (type.trim().isEmpty()) read.deviceWithoutIdentity();
 				// Build 15 (issue #23): no MAC, no identity; skipped here,
 				// in buildRelationships and in the snapshot index alike
 				// (Snapshot.build logs it at DEBUG).
@@ -695,7 +704,9 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 						}
 					}
 					read.switchPorts(ReadKinds.informing(dev.get("state").asString()),
-							portTable.isList(), portsNoIndex);
+							portTable.isList(),
+							portTable.isList() ? portTable.asList().size() : 0,
+							portsNoIndex);
 				} else if ("uap".equals(type)) {
 					out.accept(rcOf("UniFiAccessPoint", name, "mac", mac));
 					aps++;
@@ -716,7 +727,9 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 					}
 					read.accessPointRadios(
 							ReadKinds.informing(dev.get("state").asString()),
-							radioStats.isList(), radiosNoCode);
+							radioStats.isList(),
+							radioStats.isList() ? radioStats.asList().size() : 0,
+							radiosNoCode);
 				}
 			}
 
@@ -755,7 +768,8 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 				}
 				// Issue #20: Protect kinds are read only on a bootstrap
 				// that arrived with an NVR (s.protect is null otherwise).
-				read.protect(nvrMac != null, cams.isList(), camerasNoMac);
+				read.protect(nvrMac != null, cams.isList(),
+						cams.isList() ? cams.asList().size() : 0, camerasNoMac);
 			}
 		}
 

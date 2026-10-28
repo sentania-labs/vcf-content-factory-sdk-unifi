@@ -43,7 +43,10 @@ them after its Deleted Objects retention (issue #20). The first upgrade
 counts every leftover from older builds at once: `<mac>_0` switch ports, a
 camera removed from Protect, a gateway no longer listed, all marked about
 an hour after the upgrade and then deleted with their history. This cannot
-be undone. See [REFERENCE.md, Removed objects](../REFERENCE.md#removed-objects).
+be undone. Removal follows what the controller lists, so narrowing the
+account's site access removes those sites and their devices too. An empty
+list is never taken as proof that everything is gone, so the last object
+of a kind is not removed automatically. See [REFERENCE.md, Removed objects](../REFERENCE.md#removed-objects).
 
 ### Alerts
 

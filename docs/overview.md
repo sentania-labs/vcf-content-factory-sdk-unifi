@@ -294,7 +294,8 @@ logged at debug only, never WARN spam.
   deletes it after the Deleted Objects retention. A kind counts a miss only
   in a cycle that read it in full: an unreadable site, a disconnected
   switch or access point, or a Protect outage counts nothing for the kinds
-  it touches. The first upgrade marks every leftover from older builds
+  it touches, and neither does an empty site, camera, port or radio list,
+  so the last object of a kind is never removed automatically. The first upgrade marks every leftover from older builds
   (see README, Upgrading to build 18). Rule: REFERENCE.md, Removed objects.
 
 - **A failed read does not drop relationships** (build 18, issue #20). On a

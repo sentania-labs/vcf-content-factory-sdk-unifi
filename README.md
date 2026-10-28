@@ -83,6 +83,14 @@ of the retention window. This cannot be undone. On devel that includes:
 - a device an earlier build registered while it was pending adoption, and
   any radio registered as `<mac>_` before build 15.
 
+Removal follows what the controller lists, so a configuration or
+permission change counts too: narrowing the account's site access removes
+those sites and their devices, and a radio the controller stops reporting
+is removed. An object that comes back returns as a new object with no
+history. An empty answer is never taken as proof that everything is gone
+(an empty site, camera, port or radio list counts nothing), so the last
+object of a kind is never removed automatically; delete it by hand.
+
 Before upgrading, list the pack's objects (Inventory, filter by adapter
 type UniFi Controller) and export anything whose history you want to keep.
 Details: REFERENCE.md, Removed objects.

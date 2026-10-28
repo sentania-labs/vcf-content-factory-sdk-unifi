@@ -20,26 +20,36 @@ import java.util.Set;
  * <p>The rule, per kind:
  * <ul>
  *   <li>{@code UniFiSite} and {@code UniFiWirelessAggregate} (one per site):
- *       whenever {@code /self/sites} was read, which every enumeration needs
- *       (the snapshot build throws otherwise). A site removed from the
- *       controller and its Wireless Summary are marked together.</li>
+ *       whenever {@code /self/sites} was read as a list with at least one
+ *       site (the snapshot build throws without a list). A site removed from
+ *       the controller and its Wireless Summary are marked together. An
+ *       empty site list is not proof that everything is gone (a controller
+ *       always carries its default site; a Network app mid-restore, an
+ *       account whose site access was emptied or a proxy stub can answer
+ *       {@code []}), so it declares no kind at all (review R2-B1).</li>
  *   <li>{@code UniFiGateway}, {@code UniFiSwitch}, {@code UniFiAccessPoint}:
  *       only when every site's {@code stat/device} was read (no failed or
- *       cooling-down site, every payload a device list) and no gateway,
- *       switch or access point record lacked its MAC. The hook is per kind,
+ *       cooling-down site, every payload a device list with
+ *       {@code meta.rc} {@code ok}) and no gateway, switch or access point
+ *       record lacked its MAC, and no device record lacked its
+ *       {@code type} (it could have been any of the three). The hook is per kind,
  *       not per site, and a device can move between sites, so one unread
  *       site leaves every device kind out.</li>
  *   <li>{@code UniFiWanInterface}, {@code UniFiSwitchPort},
  *       {@code UniFiRadio}: as their device kinds, and also only when every
  *       registered device of that type is informing the controller (state
  *       1, 4, 5 or 7) and sent its table ({@code port_table},
- *       {@code radio_table_stats}) as a list with an identity on every row.
- *       A disconnected switch may come back with an empty or missing port
- *       table; its ports are not gone.</li>
+ *       {@code radio_table_stats}) as a non-empty list with an identity on
+ *       every row. A disconnected switch may come back with an empty or
+ *       missing port table; its ports are not gone. Every switch has ports
+ *       and every access point a radio, so an empty table is incomplete in
+ *       any state (review R2-W1).</li>
  *   <li>{@code UniFiNvr}, {@code UniFiCamera}: only when the Protect
  *       bootstrap was read and carried an NVR. The NVR kind also needs the
- *       NVR's MAC; the camera kind needs {@code cameras} as a list with a MAC
- *       on every camera. A Protect outage marks no camera.</li>
+ *       NVR's MAC; the camera kind needs {@code cameras} as a non-empty list
+ *       with a MAC on every camera. A Protect outage marks no camera, and
+ *       neither does {@code cameras: []} with an NVR present (review
+ *       R2-W1), so the last camera is never removed automatically.</li>
  * </ul>
  * {@code UniFiWorld} is never named (and is excluded; it is always
  * delivered). A device pending adoption is not registered by discovery
@@ -75,9 +85,13 @@ final class ReadKinds {
 	private boolean nvrRead;
 	private boolean camerasRead;
 
-	/** {@code /self/sites} was read as a site list. */
-	void sitesRead() {
-		sitesRead = true;
+	/**
+	 * {@code /self/sites} was read as a site list.
+	 *
+	 * @param siteCount the sites in it; 0 declares nothing (R2-B1)
+	 */
+	void sitesRead(int siteCount) {
+		sitesRead = siteCount > 0;
 	}
 
 	/**
@@ -85,12 +99,27 @@ final class ReadKinds {
 	 *
 	 * @param failed     the site failed or is cooling down this cycle
 	 * @param deviceList its payload's {@code data} is a list
+	 * @param rcOk       its payload's {@code meta.rc} is {@code ok}
+	 *                   ({@link #rcOk(String)})
 	 */
-	void site(boolean failed, boolean deviceList) {
-		if (failed || !deviceList) everySiteRead = false;
+	void site(boolean failed, boolean deviceList, boolean rcOk) {
+		if (failed || !deviceList || !rcOk) everySiteRead = false;
 	}
 
-	/** A gateway, switch or access point record with no MAC (#23). */
+	/**
+	 * Whether a classic-API {@code meta.rc} says the read succeeded. Every
+	 * classic Network response carries {@code meta}; a 200 with
+	 * {@code rc: error} (or no {@code meta}) is not a complete read (R2-W1).
+	 */
+	static boolean rcOk(String rc) {
+		return rc != null && "ok".equalsIgnoreCase(rc.trim());
+	}
+
+	/**
+	 * A gateway, switch or access point record with no MAC (#23), or a
+	 * device record with no {@code type} (R2-N2): which kind it was is
+	 * unknown, so no device kind is complete.
+	 */
 	void deviceWithoutIdentity() {
 		deviceWithoutIdentity = true;
 	}
@@ -109,10 +138,14 @@ final class ReadKinds {
 	 *
 	 * @param informing    its state is a known informing code
 	 * @param portList     {@code port_table} is a list
+	 * @param portRows     rows in it; 0 is incomplete (every switch has ports)
 	 * @param portsNoIndex rows of it with no {@code port_idx}
 	 */
-	void switchPorts(boolean informing, boolean portList, int portsNoIndex) {
-		if (!informing || !portList || portsNoIndex > 0) portsIncomplete = true;
+	void switchPorts(boolean informing, boolean portList, int portRows,
+			int portsNoIndex) {
+		if (!informing || !portList || portRows <= 0 || portsNoIndex > 0) {
+			portsIncomplete = true;
+		}
 	}
 
 	/**
@@ -120,10 +153,14 @@ final class ReadKinds {
 	 *
 	 * @param informing    its state is a known informing code
 	 * @param radioList    {@code radio_table_stats} is a list
+	 * @param radioRows    rows in it; 0 is incomplete (every AP has a radio)
 	 * @param radiosNoCode rows of it with no radio code
 	 */
-	void accessPointRadios(boolean informing, boolean radioList, int radiosNoCode) {
-		if (!informing || !radioList || radiosNoCode > 0) radiosIncomplete = true;
+	void accessPointRadios(boolean informing, boolean radioList, int radioRows,
+			int radiosNoCode) {
+		if (!informing || !radioList || radioRows <= 0 || radiosNoCode > 0) {
+			radiosIncomplete = true;
+		}
 	}
 
 	/**
@@ -132,12 +169,14 @@ final class ReadKinds {
 	 *
 	 * @param nvrHasMac       the NVR has a MAC
 	 * @param cameraList      {@code cameras} is a list
+	 * @param cameraRows      cameras in it; 0 is not proof none exist (R2-W1)
 	 * @param camerasNoMac    cameras in it with no MAC
 	 */
-	void protect(boolean nvrHasMac, boolean cameraList, int camerasNoMac) {
+	void protect(boolean nvrHasMac, boolean cameraList, int cameraRows,
+			int camerasNoMac) {
 		protectRead = true;
 		nvrRead = nvrHasMac;
-		camerasRead = cameraList && camerasNoMac == 0;
+		camerasRead = cameraList && cameraRows > 0 && camerasNoMac == 0;
 	}
 
 	/** The kinds read in full, for {@code kindsReadThisCycle()}. */

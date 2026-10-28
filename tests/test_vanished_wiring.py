@@ -51,19 +51,28 @@ def enumeration():
     tail = enum.rstrip()[:-1].rstrip()  # drop the method's closing brace
     assert tail.endswith(
         "lastRead = new ReadRecord(Thread.currentThread(), read.kinds());"), tail[-120:]
-    assert enum.index("read.sitesRead();") > enum.index("currentSnapshot()")
+    assert enum.index("read.sitesRead(") > enum.index("currentSnapshot()")
+    # Review R2-B1: the site count goes in, so an empty list declares nothing.
+    assert 'read.sitesRead(s.sites.get("data").asList().size());' in enum
     # Every site's stat/device, failed sites included (cool-downs are in
     # failedSites), before its devices are walked.
     site = enum.index("read.site(s.failedSites.containsKey(siteName),")
     assert site < enum.index("for (SimpleJson dev : siteDevices.asList())")
     assert "s.devicesBySite.containsKey(siteName) && siteDevices.isList()" in enum
+    # Review R2-W1(a): meta.rc must be ok for the site to count as read.
+    assert 'ReadKinds.rcOk(sitePayload.get("meta").get("rc").asString(""))' in enum
     assert "read.deviceWithoutIdentity();" in enum
+    # Review R2-N2: a record with no type is unknown, as a MAC-less one.
+    assert "if (type.trim().isEmpty()) read.deviceWithoutIdentity();" in enum
+    assert enum.index("if (type.trim().isEmpty())") < enum.index("String mac = deviceMac(dev);")
     assert 'read.gateway(ReadKinds.informing(dev.get("state").asString()));' in enum
-    assert "portTable.isList(), portsNoIndex);" in enum
-    assert "radioStats.isList(), radiosNoCode);" in enum
+    # Review R2-W1(c, d): the row count goes in, so an empty table is incomplete.
+    assert "portTable.isList() ? portTable.asList().size() : 0,\n\t\t\t\t\t\t\tportsNoIndex);" in enum
+    assert "radioStats.isList() ? radioStats.asList().size() : 0,\n\t\t\t\t\t\t\tradiosNoCode);" in enum
     # Protect is declared only inside the branch with a bootstrap and an NVR.
     protect = enum[enum.index("if (s.protect != null) {"):]
-    assert "read.protect(nvrMac != null, cams.isList(), camerasNoMac);" in protect
+    assert ("read.protect(nvrMac != null, cams.isList(),\n\t\t\t\t\t\tcams.isList() ? cams.asList().size() : 0, camerasNoMac);"
+            in protect)
     assert enum.count("read.protect(") == 1
     # Skipped records are counted, not silently dropped.
     assert "portsNoIndex++;" in enum and "radiosNoCode++;" in enum

@@ -33,6 +33,13 @@ public final class ReadKindsTest {
 		gatewayNotInformingKeepsWans();
 		deviceWithNoMacLeavesDevicesOut();
 		noSiteListNamesNothing();
+		emptySiteListNamesNothing();
+		siteRcNotOkIsNotRead();
+		failedSiteWithAListIsNotRead();
+		emptyCameraListWithNvrIsNotRead();
+		emptyPortTableIsNotRead();
+		emptyRadioTableIsNotRead();
+		deviceWithNoTypeLeavesDevicesOut();
 		worldIsExcluded();
 		informingStates();
 		System.out.println("ReadKindsTest: all assertions passed");
@@ -41,12 +48,12 @@ public final class ReadKindsTest {
 	/** A healthy devel-shaped cycle: one site, every table, Protect up. */
 	private static ReadKinds complete() {
 		ReadKinds r = new ReadKinds();
-		r.sitesRead();
-		r.site(false, true);
+		r.sitesRead(1);
+		r.site(false, true, true);
 		r.gateway(true);
-		r.switchPorts(true, true, 0);
-		r.accessPointRadios(true, true, 0);
-		r.protect(true, true, 0);
+		r.switchPorts(true, true, 8, 0);
+		r.accessPointRadios(true, true, 2, 0);
+		r.protect(true, true, 3, 0);
 		return r;
 	}
 
@@ -139,13 +146,13 @@ public final class ReadKindsTest {
 	 */
 	static void failedSiteMarksNothing() {
 		ReadKinds r = new ReadKinds();
-		r.sitesRead();
-		r.site(false, true);  // site A read
-		r.site(true, false);  // site B failed (or cooling down)
+		r.sitesRead(1);
+		r.site(false, true, true);  // site A read
+		r.site(true, false, true);  // site B failed (or cooling down)
 		r.gateway(true);
-		r.switchPorts(true, true, 0);
-		r.accessPointRadios(true, true, 0);
-		r.protect(true, true, 0);
+		r.switchPorts(true, true, 8, 0);
+		r.accessPointRadios(true, true, 2, 0);
+		r.protect(true, true, 3, 0);
 		Set<String> k = r.kinds();
 		for (String kind : NETWORK) {
 			T.check(!k.contains(kind), kind + " not read with a failed site");
@@ -167,8 +174,8 @@ public final class ReadKindsTest {
 	/** A 200 whose data is not a device list is as unread as a failure. */
 	static void siteWithNoDeviceListIsNotRead() {
 		ReadKinds r = new ReadKinds();
-		r.sitesRead();
-		r.site(false, false);
+		r.sitesRead(1);
+		r.site(false, false, true);
 		T.eq(set(ReadKinds.SITE, ReadKinds.AGGREGATE), r.kinds(),
 				"no device list: only site kinds");
 	}
@@ -176,11 +183,11 @@ public final class ReadKindsTest {
 	/** Protect bootstrap failed: protect() is never called. */
 	static void protectOutageMarksNoCamera() {
 		ReadKinds r = new ReadKinds();
-		r.sitesRead();
-		r.site(false, true);
+		r.sitesRead(1);
+		r.site(false, true, true);
 		r.gateway(true);
-		r.switchPorts(true, true, 0);
-		r.accessPointRadios(true, true, 0);
+		r.switchPorts(true, true, 8, 0);
+		r.accessPointRadios(true, true, 2, 0);
 		Set<String> k = r.kinds();
 		T.check(!k.contains(ReadKinds.CAMERA) && !k.contains(ReadKinds.NVR),
 				"Protect outage: no camera or NVR kind");
@@ -198,8 +205,8 @@ public final class ReadKindsTest {
 
 	static void protectWithoutNvrMacKeepsCameras() {
 		ReadKinds r = new ReadKinds();
-		r.sitesRead();
-		r.protect(false, true, 0);
+		r.sitesRead(1);
+		r.protect(false, true, 3, 0);
 		Set<String> k = r.kinds();
 		T.check(!k.contains(ReadKinds.NVR), "NVR with no MAC: NVR kind not read");
 		T.check(k.contains(ReadKinds.CAMERA), "its cameras are still read");
@@ -207,42 +214,42 @@ public final class ReadKindsTest {
 
 	static void cameraListGapsAreNotRead() {
 		ReadKinds a = new ReadKinds();
-		a.sitesRead();
-		a.protect(true, false, 0);
+		a.sitesRead(1);
+		a.protect(true, false, 3, 0);
 		T.check(!a.kinds().contains(ReadKinds.CAMERA), "cameras not a list");
 		T.check(a.kinds().contains(ReadKinds.NVR), "NVR still read");
 		ReadKinds b = new ReadKinds();
-		b.sitesRead();
-		b.protect(true, true, 1);
+		b.sitesRead(1);
+		b.protect(true, true, 3, 1);
 		T.check(!b.kinds().contains(ReadKinds.CAMERA), "a camera with no MAC");
 	}
 
 	static void disconnectedSwitchKeepsItsPorts() {
 		ReadKinds r = complete();
-		r.switchPorts(false, true, 0); // a second switch, disconnected
+		r.switchPorts(false, true, 8, 0); // a second switch, disconnected
 		Set<String> k = r.kinds();
 		T.check(!k.contains(ReadKinds.PORT), "a disconnected switch: no port kind");
 		T.check(k.contains(ReadKinds.SWITCH), "the switch kind is still read");
 		ReadKinds n = complete();
-		n.switchPorts(true, false, 0);
+		n.switchPorts(true, false, 8, 0);
 		T.check(!n.kinds().contains(ReadKinds.PORT), "no port_table list");
 	}
 
 	static void portWithNoIndexLeavesPortsOut() {
 		ReadKinds r = complete();
-		r.switchPorts(true, true, 1);
+		r.switchPorts(true, true, 8, 1);
 		T.check(!r.kinds().contains(ReadKinds.PORT), "a port with no port_idx");
 	}
 
 	static void accessPointWithoutRadioTableKeepsRadios() {
 		ReadKinds a = complete();
-		a.accessPointRadios(true, false, 0);
+		a.accessPointRadios(true, false, 2, 0);
 		T.check(!a.kinds().contains(ReadKinds.RADIO), "no radio_table_stats");
 		ReadKinds b = complete();
-		b.accessPointRadios(false, true, 0);
+		b.accessPointRadios(false, true, 2, 0);
 		T.check(!b.kinds().contains(ReadKinds.RADIO), "an AP not informing");
 		ReadKinds c = complete();
-		c.accessPointRadios(true, true, 1);
+		c.accessPointRadios(true, true, 2, 1);
 		T.check(!c.kinds().contains(ReadKinds.RADIO), "a radio with no code");
 		T.check(c.kinds().contains(ReadKinds.ACCESS_POINT), "APs still read");
 	}
@@ -265,7 +272,7 @@ public final class ReadKindsTest {
 
 	static void noSiteListNamesNothing() {
 		ReadKinds r = new ReadKinds();
-		r.protect(true, true, 0);
+		r.protect(true, true, 3, 0);
 		T.check(r.kinds().isEmpty(), "no site list, nothing read");
 	}
 
@@ -282,5 +289,101 @@ public final class ReadKindsTest {
 		T.check(!ReadKinds.informing("6"), "6 heartbeat missed");
 		T.check(!ReadKinds.informing(null), "absent state is not trusted");
 		T.check(!ReadKinds.informing("x"), "a non-number is not trusted");
+	}
+
+	/**
+	 * Review R2-B1: {@code /self/sites} answered {@code {"data":[]}}. World is
+	 * still delivered, so the framework's "delivered nothing" guard does not
+	 * fire; the adapter must declare nothing, or twelve such cycles mark the
+	 * whole inventory.
+	 */
+	static void emptySiteListNamesNothing() {
+		ReadKinds r = new ReadKinds();
+		r.sitesRead(0);
+		r.protect(true, true, 3, 0);
+		T.check(r.kinds().isEmpty(), "an empty site list declares nothing");
+
+		Map<String, String> known = devel();
+		Model m = new Model();
+		for (int i = 0; i < 30; i++) m.cycle(known, set("world"), r.kinds());
+		T.check(m.misses.isEmpty() && m.marked.isEmpty(),
+				"30 cycles of an empty site list: no miss, no mark");
+	}
+
+	/** Review R2-W1(a): a 200 whose meta.rc is not ok is not a read. */
+	static void siteRcNotOkIsNotRead() {
+		ReadKinds r = new ReadKinds();
+		r.sitesRead(1);
+		r.site(false, true, ReadKinds.rcOk("error"));
+		r.gateway(true);
+		r.switchPorts(true, true, 8, 0);
+		r.accessPointRadios(true, true, 2, 0);
+		Set<String> k = r.kinds();
+		for (String kind : NETWORK) {
+			T.check(!k.contains(kind), kind + " not read with meta.rc error");
+		}
+		T.check(ReadKinds.rcOk("ok") && ReadKinds.rcOk("OK"), "ok is ok");
+		T.check(!ReadKinds.rcOk(""), "no meta.rc is not ok");
+		T.check(!ReadKinds.rcOk(null), "null meta.rc is not ok");
+	}
+
+	/**
+	 * Review R2-N1: a site marked failed that still has a device list (not
+	 * reachable today, SiteReads keeps them disjoint) is not read.
+	 */
+	static void failedSiteWithAListIsNotRead() {
+		ReadKinds r = new ReadKinds();
+		r.sitesRead(1);
+		r.site(true, true, true);
+		Set<String> k = r.kinds();
+		for (String kind : NETWORK) {
+			T.check(!k.contains(kind), kind + " not read: failed site with a list");
+		}
+	}
+
+	/** Review R2-W1(b): cameras: [] with an NVR present is not proof. */
+	static void emptyCameraListWithNvrIsNotRead() {
+		ReadKinds r = complete();
+		r.protect(true, true, 0, 0);
+		Set<String> k = r.kinds();
+		T.check(!k.contains(ReadKinds.CAMERA), "cameras: [] declares no camera");
+		T.check(k.contains(ReadKinds.NVR), "the NVR is still read");
+	}
+
+	/** Review R2-W1(c): port_table: [] in any state is incomplete. */
+	static void emptyPortTableIsNotRead() {
+		for (boolean informing : new boolean[] {true, false}) {
+			ReadKinds r = complete();
+			r.switchPorts(informing, true, 0, 0);
+			T.check(!r.kinds().contains(ReadKinds.PORT),
+					"port_table: [] (informing=" + informing + ")");
+			T.check(r.kinds().contains(ReadKinds.SWITCH), "switches still read");
+		}
+	}
+
+	/** Review R2-W1(d): radio_table_stats: [] on an AP is incomplete. */
+	static void emptyRadioTableIsNotRead() {
+		for (boolean informing : new boolean[] {true, false}) {
+			ReadKinds r = complete();
+			r.accessPointRadios(informing, true, 0, 0);
+			T.check(!r.kinds().contains(ReadKinds.RADIO),
+					"radio_table_stats: [] (informing=" + informing + ")");
+			T.check(r.kinds().contains(ReadKinds.ACCESS_POINT), "APs still read");
+		}
+	}
+
+	/**
+	 * Review R2-N2: the adapter calls deviceWithoutIdentity for a record with
+	 * no type (MAC or not), so the result matches a MAC-less device.
+	 */
+	static void deviceWithNoTypeLeavesDevicesOut() {
+		ReadKinds r = complete();
+		r.deviceWithoutIdentity();
+		Set<String> k = r.kinds();
+		for (String kind : NETWORK) {
+			T.check(!k.contains(kind), kind + " not read with a typeless device");
+		}
+		T.check(k.contains(ReadKinds.SITE) && k.contains(ReadKinds.CAMERA),
+				"site and Protect kinds unaffected");
 	}
 }

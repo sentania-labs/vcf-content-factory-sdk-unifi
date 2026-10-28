@@ -547,10 +547,18 @@ kind read in full counts a miss:
 
 | Kinds | Counted only when |
 |---|---|
-| Site, Wireless Summary | `/self/sites` was read (every cycle that collects at all) |
-| Gateway, Switch, Access Point | every site's device list was read (no failed or cooling-down site) and no gateway, switch or access point came without a MAC |
-| WAN Interface, Switch Port, Radio | as their device, and every gateway (WAN), switch (port) or access point (radio) is informing the controller and sent its port or radio table with an index or radio code on every row |
-| NVR, Camera | the Protect bootstrap was read and carried an NVR; the NVR also needs its MAC, cameras need every camera's MAC |
+| Site, Wireless Summary | `/self/sites` was read and listed at least one site |
+| Gateway, Switch, Access Point | every site's device list was read (no failed or cooling-down site, `meta.rc` `ok`), no gateway, switch or access point came without a MAC, and no device record came without a `type` |
+| WAN Interface, Switch Port, Radio | as their device, and every gateway (WAN), switch (port) or access point (radio) is informing the controller and sent a non-empty port or radio table with an index or radio code on every row |
+| NVR, Camera | the Protect bootstrap was read and carried an NVR; the NVR also needs its MAC, cameras need a non-empty camera list with every camera's MAC |
+
+An empty answer is not proof that everything is gone, so an empty list
+counts nothing: an empty site list counts no kind at all (a controller
+always has its default site), `cameras: []` with an NVR present counts no
+camera, and an empty port or radio table counts no port or radio (every
+switch has ports and every access point a radio). The cost is that **the
+last object of a kind is never removed automatically**: when the last site,
+camera, port or radio really goes, delete its object by hand.
 
 So one unreadable site, one disconnected switch or one Protect outage
 counts nothing for the kinds it touches, however long it lasts; the count
@@ -563,6 +571,13 @@ any other device the controller no longer lists. A marked object that comes
 back is registered again by discovery; that path is not yet seen live
 (framework note, `knowledge/context/sdk/vanished_object_lifecycle.md` in the
 factory).
+
+Removal follows what the controller lists, not why it stopped listing it.
+Narrowing the account's site access removes those sites and their devices,
+and a radio the controller no longer reports (for example a band disabled
+in configuration, if UniFi drops it from `radio_table_stats`; not verified)
+is removed too. If it comes back, it returns as a new object with no
+history.
 
 ### Relationships when a read fails
 
@@ -577,7 +592,13 @@ is sent with its cameras only on a cycle that read Protect, so NVR > Camera
 edges stay through an outage. The vmnic stitch's HostSystem > Switch Port
 edges are only ever added, never replaced, so a cycle without the Suite API
 removes none of them. The cost of this rule: a relationship that really
-changed during such a cycle shows on the next good one.
+changed during such a cycle shows on the next good one. An NVR left behind
+after Protect is uninstalled is never marked Not Existing (the NVR kind is
+counted only on a cycle that read Protect), so VCF Operations keeps holding
+a UniFi NVR for the instance, and the 12-cycle count is in memory: after
+every collector restart the first site's edges are frozen again for up to
+12 cycles, with the same INFO and WARN. Delete the leftover NVR object by
+hand to stop it.
 
 ---
 

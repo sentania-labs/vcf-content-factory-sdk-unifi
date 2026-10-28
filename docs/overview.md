@@ -35,6 +35,8 @@ The pack discovers an eleven-kind infrastructure tree (see
 | UniFi Access Point | `UniFiAccessPoint` | AP device. |
 | UniFi Radio | `UniFiRadio` | Per-radio child of an AP. |
 | UniFi Wireless Summary | `UniFiWirelessAggregate` | Per-site wireless rollup. |
+| UniFi NVR | `UniFiNvr` | Protect NVR. |
+| UniFi Camera | `UniFiCamera` | Protect camera. |
 
 Switches and access points nest under the device they uplink to
 (Gateway > Switch > ... > Access Point), so the tree follows the cabling;
@@ -44,8 +46,6 @@ are named `<label> (<parent>)`: `Port 3 (<switch>)`, `WAN 1 (<gateway>)`,
 `5 GHz (<access point>)`, `Wireless Summary (<site>)` (build 18; existing
 objects are renamed too, and a rename on the controller carries over; see
 REFERENCE.md, Object names).
-| UniFi NVR | `UniFiNvr` | Protect NVR. |
-| UniFi Camera | `UniFiCamera` | Protect camera. |
 
 ### Metrics scope
 

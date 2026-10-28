@@ -143,9 +143,23 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 	private final Set<String> loggedUplinkFallbacks =
 			java.util.concurrent.ConcurrentHashMap.newKeySet();
 
-	/** Build 18 (#27 item 4): renameIfChanged warns once, not per resource. */
-	private final java.util.concurrent.atomic.AtomicBoolean renameLookupFailed =
-			new java.util.concurrent.atomic.AtomicBoolean();
+	/**
+	 * Build 18 (#27 item 4; review N2, N3): renameIfChanged and a rejected
+	 * NVR storage pair warn once per streak of failing cycles, not per
+	 * resource and not once per instance lifetime. Re-armed by
+	 * {@link #onCycleStart()}.
+	 */
+	private final StreakLog streakLog = new StreakLog();
+	private static final String RENAME_STREAK = "rename";
+
+	/**
+	 * Build 18 review N2: closes the streak of any warning that did not
+	 * recur in the cycle just ended, so a later failure warns again.
+	 */
+	@Override
+	protected void onCycleStart() {
+		streakLog.cycleStart();
+	}
 
 	/**
 	 * Per-cycle snapshot of the UniFi API responses, shared across all
@@ -704,9 +718,10 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		try {
 			getMonitoringResource(rc.getResourceKey());
 		} catch (RuntimeException e) {
-			if (renameLookupFailed.compareAndSet(false, true)) {
+			if (streakLog.fail(RENAME_STREAK)) {
 				logWarn("Resource rename lookup failed (names may stay as "
-						+ "first discovered; collection unaffected): " + e);
+						+ "first discovered; collection unaffected; logged once "
+						+ "until a cycle without the failure): " + e);
 			}
 		}
 	}
@@ -1372,6 +1387,22 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		}
 	}
 
+	/**
+	 * Build 18 review N3: an NVR storage pair reporting more used than total
+	 * is rejected by {@link UniFiValues#nvrStorage}; say so once per streak,
+	 * per NVR and source.
+	 */
+	private void warnUsedOverTotal(String nvrMac, String source,
+			Double total, Double used) {
+		if (UniFiValues.usedExceedsTotal(total, used)
+				&& streakLog.fail("nvr-storage|" + nvrMac + "|" + source)) {
+			logWarn("collect: NVR " + nvrMac + " storage " + source
+					+ " reports used " + used.longValue() + " above total "
+					+ total.longValue() + " bytes; that pair is not published "
+					+ "(logged once until a cycle without it)");
+		}
+	}
+
 	private void collectNvr(ResourceConfig rc, Snapshot s, List<MetricData> out) {
 		if (s.protect == null) {
 			logWarn("collect: NVR resource present but Protect data absent from snapshot");
@@ -1396,18 +1427,26 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		// read never matched); the volume is systemInfo.storage, Protect's
 		// recording share storageStats.recordingSpace, both in bytes. One
 		// source per cycle, never a total from one and a used from the
-		// other; nothing when neither has a usable pair.
+		// other; nothing when neither has a usable pair. Review N3: a pair
+		// with used above total is rejected and logged once per streak, and
+		// Storage|source says which pair fed the cycle's numbers.
 		SimpleJson volume = nvr.get("systemInfo").get("storage");
 		SimpleJson recording = nvr.get("storageStats").get("recordingSpace");
-		double[] storage = UniFiValues.nvrStorage(
-				UniFiValues.number(volume.get("size").asString()),
-				UniFiValues.number(volume.get("used").asString()),
-				UniFiValues.number(recording.get("total").asString()),
-				UniFiValues.number(recording.get("used").asString()));
+		Double volumeSize = UniFiValues.number(volume.get("size").asString());
+		Double volumeUsed = UniFiValues.number(volume.get("used").asString());
+		Double recordingTotal = UniFiValues.number(recording.get("total").asString());
+		Double recordingUsed = UniFiValues.number(recording.get("used").asString());
+		String nvrMac = UniFiIds.mac(nvr.get("mac").asString());
+		warnUsedOverTotal(nvrMac, UniFiValues.STORAGE_VOLUME, volumeSize, volumeUsed);
+		warnUsedOverTotal(nvrMac, UniFiValues.STORAGE_RECORDING,
+				recordingTotal, recordingUsed);
+		UniFiValues.NvrStorage storage = UniFiValues.nvrStorage(
+				volumeSize, volumeUsed, recordingTotal, recordingUsed);
 		if (storage != null) {
-			metric(out, "Storage|total_bytes", storage[0]);
-			metric(out, "Storage|used_bytes", storage[1]);
-			metric(out, "Storage|usage_pct", (storage[1] / storage[0]) * 100.0);
+			metric(out, "Storage|total_bytes", storage.total);
+			metric(out, "Storage|used_bytes", storage.used);
+			metric(out, "Storage|usage_pct", (storage.used / storage.total) * 100.0);
+			prop(out, "Storage|source", storage.source);
 		}
 
 		prop(out, "Configuration|model", nvr.get("modelKey").asString(""));

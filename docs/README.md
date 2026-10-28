@@ -27,6 +27,14 @@
 
 <!-- Merged from docs/_index_extra.md; edit that file, not this section. -->
 
+### Upgrading to build 18
+
+The first cycle after upgrading to build 18 renames every existing switch
+port, WAN interface, radio and Wireless Summary to `<label> (<parent>)`
+(for example `Port 3 (<switch>)`). History is kept, but saved searches,
+custom groups, views filtered by name and notification rules keyed on the
+old names need updating. See [README.md, Upgrading to build 18](../README.md#upgrading-to-build-18).
+
 ### Alerts
 
 The pak ships eight alerts with their symptoms and recommendations (build

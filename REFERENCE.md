@@ -381,6 +381,7 @@ Generated from `describe.xml` and `resources.properties` for build 18 (dev 0.0.0
 | `used_bytes` | Used | metric | bytes | yes |
 | `total_bytes` | Total | metric | bytes | yes |
 | `usage_pct` | Usage % | metric | % | yes |
+| `source` | Source | property | - | - |
 
 > Build 18 (issue #39): bytes, from the Protect bootstrap's
 > `nvr.systemInfo.storage` (`size`, `used`: the recording volume; on the
@@ -389,7 +390,12 @@ Generated from `describe.xml` and `resources.properties` for build 18 (dev 0.0.0
 > `nvr.storageStats.recordingSpace` (`total`, `used`: Protect's share of
 > the volume). A total and a used are never taken from different sources.
 > All three are published together and only when a usable pair is sent
-> (total above 0, used not negative); `usage_pct` is used / total * 100.
+> (total above 0, used not negative and not above the total); `usage_pct`
+> is used / total * 100, so never above 100. `source` (build 18 review)
+> names the pair that fed them, `systemInfo` (the volume) or
+> `recordingSpace` (Protect's share), so a step in `total_bytes` from a
+> change of source can be told apart. A pair reporting more used than total
+> is not published and is logged at WARN once per streak of cycles.
 > Builds up to 17 read `nvr.storageInfo`, which current Protect does not
 > send, so the three never published. Protect fills the volume and then
 > recycles the oldest footage, so a usage near 100 % is normal for a
@@ -485,8 +491,17 @@ it uplinks to (`uplink.uplink_mac`), so the tree follows the cabling and a
 device going down shows on everything behind it, as vSphere's Cluster >
 Host > VM does. Nesting follows Gateway > Switch (any depth) > Access Point
 (any depth); describe.xml declares the repeated levels with
-`::child/recursive`, the form VMware's own vSphere Hosts and Clusters
-traversal uses for host folders. A device is placed directly under its
+`::child/recursive`. The captured vendor form is VMware's vSphere Hosts and
+Clusters `VMWARE::HostFolder::child/recursive/preferred`; this pak leaves
+`/preferred` off on purpose. The SDK's describe validator
+(`TraversalSpecUtil.validateResKindPath`, identical bytecode in the 8.18.7
+and 9.1.1 SDKs) treats `/recursive` and `/preferred` as independent
+attributes and accepts all nine paths as written; it only limits where
+`/preferred` may go (not on the first or last level, not with `/skip`, not
+before a wildcard level). What `/preferred` does at runtime is not
+documented anywhere we have, and each device here has exactly one parent, so
+there is no alternative path for it to prefer. That Ops renders the bare
+`/recursive` paths as intended is a devel install check. A device is placed directly under its
 Site, and logged once at INFO, when its uplink is not a discovered device of
 the site, when the uplinks loop (every device on the loop), or when the pair
 cannot nest in the tree (a switch behind an access point, through a wireless

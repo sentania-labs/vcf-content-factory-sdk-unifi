@@ -50,6 +50,18 @@ under the **Accounts** tab, both under Integrations (paths checked
 
 Upload the `.pak` file under **Repository > Add**.
 
+## Upgrading to build 18
+
+On its first collection cycle after the upgrade, build 18 (1.1.0.18) renames
+every existing switch port, WAN interface, radio and Wireless Summary to
+`<label> (<parent>)`, for example `Port 3 (<switch>)`, `WAN 1 (<gateway>)`,
+`5 GHz (<access point>)` and `Wireless Summary (<site>)`. The objects keep
+their identity and their metric history; only the name changes. Anything
+keyed on the old names stops matching and needs updating: saved searches,
+custom groups and views filtered by name, and notification rules. Later
+renames on the controller carry over the same way. Details: REFERENCE.md,
+Object names.
+
 ## Configuration
 
 Create an adapter instance under **Accounts > Add Account** (Integrations, as above) and provide:

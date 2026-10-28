@@ -41,8 +41,22 @@ def nvr_storage():
     for key in ("total_bytes", "used_bytes", "usage_pct"):
         assert len(re.findall(r'"Storage\|' + key + '"', body)) == 1, key
     guarded = body[body.index("if (storage != null) {"):]
-    for key in ("total_bytes", "used_bytes", "usage_pct"):
+    for key in ("total_bytes", "used_bytes", "usage_pct", "source"):
         assert '"Storage|' + key + '"' in guarded, key + " outside the guard"
+    # Review N3: the source is published with the numbers, and both pairs
+    # are checked for used above total (logged once per streak).
+    assert 'prop(out, "Storage|source", storage.source);' in body
+    assert body.count("warnUsedOverTotal(") == 2, "both pairs checked"
+    warn = method_body("void", "warnUsedOverTotal")
+    assert "UniFiValues.usedExceedsTotal(" in warn
+    assert "streakLog.fail(" in warn, "used-over-total must log once per streak"
+    ns = "{http://schemas.vmware.com/vcops/schema}"
+    root = ET.parse(DESCRIBE).getroot()
+    kinds = [k for k in root.iter(ns + "ResourceKind")] or list(root.iter("ResourceKind"))
+    nvr = next(k for k in kinds if k.get("key") == "UniFiNvr")
+    storage = next(g for g in nvr if g.get("key") == "Storage")
+    src = [a for a in storage if a.get("key") == "source"]
+    assert len(src) == 1 and src[0].get("isProperty") == "true", "Storage|source declared"
 
 
 def uplink_tree():
@@ -100,6 +114,11 @@ def rename_opt_in():
     assert "isResourceRenameAllowed(ResourceKey" not in SRC, "no per-key override"
     helper = method_body("void", "renameIfChanged")
     assert "getMonitoringResource(rc.getResourceKey());" in helper
+    # Review N2: the warning is once per streak, re-armed every cycle.
+    assert "streakLog.fail(RENAME_STREAK)" in helper
+    assert "AtomicBoolean" not in helper
+    hook = method_body("void", "onCycleStart")
+    assert "streakLog.cycleStart();" in hook, "onCycleStart must re-arm the streak log"
     enum = method_body("void", "enumerateResources")
     assert enum.count("sink.accept(") == 1, "only the wrapper may call sink directly"
     wrapper = enum[enum.index("ResourceSink out = rc -> {"):enum.index("};")]

@@ -192,9 +192,27 @@ final class UniFiValues {
 		return ms / 86_400_000.0;
 	}
 
+	/** Build 18 review N3: {@code Storage|source} when the volume pair fed the metrics. */
+	static final String STORAGE_VOLUME = "systemInfo";
+	/** Build 18 review N3: {@code Storage|source} when Protect's recording share did. */
+	static final String STORAGE_RECORDING = "recordingSpace";
+
+	/** One NVR storage reading: which source, and its total and used in bytes. */
+	static final class NvrStorage {
+		final String source;
+		final double total;
+		final double used;
+
+		NvrStorage(String source, double total, double used) {
+			this.source = source;
+			this.total = total;
+			this.used = used;
+		}
+	}
+
 	/**
-	 * Build 18 (issue #39): the NVR's storage as {@code {total, used}} in
-	 * bytes, or {@code null} when neither source gives a usable pair. The
+	 * Build 18 (issue #39): the NVR's storage in bytes and the source it came
+	 * from, or {@code null} when neither source gives a usable pair. The
 	 * Protect bootstrap (UDM Pro, Protect 7.3.70, devel 2026-10-28) has no
 	 * {@code storageInfo}; storage is under {@code nvr.systemInfo.storage}
 	 * ({@code size}, {@code used}, {@code available}: the recording volume,
@@ -202,22 +220,34 @@ final class UniFiValues {
 	 * {@code total_bytes} / {@code used_bytes}) and
 	 * {@code nvr.storageStats.recordingSpace} ({@code total}, {@code used},
 	 * {@code available}: Protect's share of it). The volume is read first,
-	 * the recording space only when the volume pair is missing. A total and
-	 * a used from different sources are never combined; a pair with a total
-	 * of 0 or less, or a negative used, is unusable.
+	 * the recording space only when the volume pair is not usable. A total
+	 * and a used from different sources are never combined; a pair with a
+	 * total of 0 or less, a negative used, or (review N3) a used above the
+	 * total is unusable, see {@link #usedExceedsTotal}.
 	 */
-	static double[] nvrStorage(Double volumeSize, Double volumeUsed,
+	static NvrStorage nvrStorage(Double volumeSize, Double volumeUsed,
 			Double recordingTotal, Double recordingUsed) {
 		if (usablePair(volumeSize, volumeUsed)) {
-			return new double[] {volumeSize, volumeUsed};
+			return new NvrStorage(STORAGE_VOLUME, volumeSize, volumeUsed);
 		}
 		if (usablePair(recordingTotal, recordingUsed)) {
-			return new double[] {recordingTotal, recordingUsed};
+			return new NvrStorage(STORAGE_RECORDING, recordingTotal, recordingUsed);
 		}
 		return null;
 	}
 
+	/**
+	 * Build 18 review N3: a pair that is otherwise usable but reports more
+	 * used than total. It is rejected (neither number is published from it,
+	 * so {@code usage_pct} cannot pass 100); the adapter logs it once per
+	 * streak.
+	 */
+	static boolean usedExceedsTotal(Double total, Double used) {
+		return total != null && used != null && total > 0 && used > total;
+	}
+
 	private static boolean usablePair(Double total, Double used) {
-		return total != null && used != null && total > 0 && used >= 0;
+		return total != null && used != null && total > 0 && used >= 0
+				&& used <= total;
 	}
 }

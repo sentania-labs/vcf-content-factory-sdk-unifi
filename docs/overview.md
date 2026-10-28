@@ -116,7 +116,6 @@ design, so a full volume is normal.
 
 ### Alerts
 
-<!-- TODO(build 19): recount once the content authors finish (expected 9 / 19 / 7). -->
 Nine alerts, nineteen symptoms and seven recommendations are bundled and
 installed with the pak (build 16 shipped eight, twelve and six; build 17
 added two scoping symptoms; build 19 adds NVR Storage At Risk with five

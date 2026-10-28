@@ -722,8 +722,6 @@ hand to stop it.
 
 ## Alerts
 
-<!-- TODO(build 19): recount alerts/, symptoms/ and recommendations/ once the
-content authors finish (expected 9 / 19 / 7) and drop this note. -->
 Build 16 (issue #30) ships the alert definitions, their symptoms and
 recommendations as bundled content (`symptoms/`, `alerts/`,
 `recommendations/`, listed under `bundled_content` in `adapter.yaml`): eight

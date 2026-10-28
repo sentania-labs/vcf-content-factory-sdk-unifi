@@ -10,24 +10,40 @@ import java.util.Set;
 /**
  * Build 19: the NVR's storage health as Protect reports it, from the
  * bootstrap's {@code nvr.systemInfo.ustorage} ({@code space[]} volumes,
- * {@code disks[]} drives). No VCF Ops SDK and no framework-jar dependency:
- * the adapter copies each field's text out of the bootstrap
- * ({@code SimpleJson.asString()}, {@code null} when absent) into
- * {@link Space} and {@link Disk}, so the plain-main tests drive exactly the
- * logic the adapter runs.
+ * {@code disks[]} drives), plus the volume's {@code raid} block from UniFi
+ * OS {@code /api/system} (Protect trims it from the bootstrap). No VCF Ops
+ * SDK and no framework-jar dependency: the adapter copies each field's text
+ * out of the JSON into {@link Space} and {@link Disk}, so the plain-main
+ * tests drive exactly the logic the adapter runs.
  *
  * <p>Values are Protect's own, verbatim. The only classification here is
- * which drive states count as not healthy, and it is the one the UniFi OS
- * storage page applies (console web UI, main bundle, read 2026-10-28):
- * green {@code normal}, {@code spare}, {@code initializing},
- * {@code expanding}; neutral {@code nodisk} (an empty bay, not a drive) and
- * {@code probing}; orange {@code risk}, {@code spare_at_risk},
- * {@code foreign}, {@code repairing}, {@code incompatible}; red
- * {@code broken}, {@code faulty}, {@code not_support}. The UI also shows a
- * drive at risk when its {@code health} is {@code at_risk} or its
- * {@code reason} names a risk reason, whatever its state. A state this
- * pack does not know counts as not healthy: a drive the pack cannot place
- * is surfaced, never passed.
+ * the one the UniFi OS storage page applies (console web UI, main bundle,
+ * read 2026-10-28), copied rule for rule:
+ * <ul>
+ * <li>Drive states: green {@code normal}, {@code initializing},
+ * {@code expanding}; black {@code spare}; neutral {@code nodisk} (an empty
+ * bay, not a drive) and {@code probing}; orange {@code risk},
+ * {@code spare_at_risk}, {@code foreign}, {@code repairing},
+ * {@code incompatible}; red {@code broken}, {@code faulty},
+ * {@code not_support}. The UI also shows a drive at risk when its
+ * {@code health} is {@code at_risk} or its {@code reason} names a risk
+ * reason, whatever its state, and turns a {@code spare} with any
+ * {@code reason} into {@code spare_at_risk}. A state this pack does not
+ * know counts as not healthy: a drive the pack cannot place is surfaced,
+ * never passed.</li>
+ * <li>Volume display health ({@link #displayHealth}): {@code health} and
+ * {@code healthy} display as {@code healthy}; a primary volume at risk for
+ * exactly one reason, {@code lacking_disk} at level {@code atrisk}, displays
+ * healthy only when it has no {@code raid} block or
+ * {@code raid.had_most < raid.expected} (the array never had all its
+ * members). When the raid block could not be read the exception is not
+ * applied.</li>
+ * <li>Rebuild ({@link #rebuildRelabel}): on a healthy primary volume whose
+ * action is {@code repairing}, with {@code raid.expected == 2} and
+ * {@code had_most >= expected}, one drive {@code normal} and one
+ * {@code repairing}, the UI shows the {@code repairing} drive as
+ * {@code initializing}.</li>
+ * </ul>
  */
 final class NvrStorageHealth {
 
@@ -36,7 +52,7 @@ final class NvrStorageHealth {
 	/** Published for the "first not-healthy drive" pair when none is. */
 	static final String NONE = "none";
 
-	/** Drive states the UI colours green or neutral. */
+	/** Drive states the UI colours green, black ({@code spare}) or neutral. */
 	static final Set<String> OK_STATES = Collections.unmodifiableSet(
 			new HashSet<>(Arrays.asList("normal", "spare", "initializing",
 					"expanding", "probing")));
@@ -55,6 +71,31 @@ final class NvrStorageHealth {
 					"too_many_unc_count", "too_many_get_smart_error",
 					"investigation_needed")));
 
+	/**
+	 * A volume's {@code raid} block from {@code /api/system}: {@link #NONE}
+	 * when the record was read and carries no block; a {@code null} Raid on a
+	 * {@link Space} means it could not be read.
+	 */
+	static final class Raid {
+		static final Raid NONE = new Raid(null, null);
+		final Double expected;
+		final Double hadMost;
+
+		private Raid(Double expected, Double hadMost) {
+			this.expected = expected;
+			this.hadMost = hadMost;
+		}
+
+		/** A read block; {@code null} (unreadable) unless both counts are numbers. */
+		static Raid of(Double expected, Double hadMost) {
+			return expected == null || hadMost == null ? null : new Raid(expected, hadMost);
+		}
+
+		boolean present() {
+			return this != NONE;
+		}
+	}
+
 	/** One {@code ustorage.space[]} entry. */
 	static final class Space {
 		final String spaceType;
@@ -63,14 +104,27 @@ final class NvrStorageHealth {
 		final String action;
 		/** {@code type:level} per reason, in Protect's order; null when the list is absent. */
 		final List<String> reasons;
+		/** The raid block, {@link Raid#NONE} when there is none, null when unread. */
+		final Raid raid;
 
 		Space(String spaceType, String device, String health, String action,
 				List<String> reasons) {
+			this(spaceType, device, health, action, reasons, null);
+		}
+
+		Space(String spaceType, String device, String health, String action,
+				List<String> reasons, Raid raid) {
 			this.spaceType = spaceType;
 			this.device = device;
 			this.health = health;
 			this.action = action;
 			this.reasons = reasons;
+			this.raid = raid;
+		}
+
+		/** The same volume with its raid block (or null, unread). */
+		Space withRaid(Raid r) {
+			return new Space(spaceType, device, health, action, reasons, r);
 		}
 	}
 
@@ -126,6 +180,47 @@ final class NvrStorageHealth {
 		return String.join(", ", s.reasons);
 	}
 
+	/** The one reason the UI forgives on a volume that never had all its members. */
+	static final String LACKING_DISK_ATRISK = "lacking_disk:atrisk";
+
+	/**
+	 * {@code Storage|volume_display_health}: the health the storage page
+	 * displays for this volume ({@code healthy}, {@code atrisk},
+	 * {@code failed}), by the UI's rule (class Javadoc). A value outside the
+	 * UI's set is returned verbatim, so it is surfaced, never passed;
+	 * {@code null} (publish nothing) when there is no volume or it carries
+	 * no {@code health}.
+	 */
+	static String displayHealth(Space s) {
+		if (s == null || s.health == null) return null;
+		if ("health".equals(s.health) || "healthy".equals(s.health)) return "healthy";
+		if (!"atrisk".equals(s.health)) return s.health;
+		boolean forgiven = "primary".equals(s.spaceType)
+				&& s.reasons != null && s.reasons.size() == 1
+				&& LACKING_DISK_ATRISK.equals(s.reasons.get(0))
+				&& s.raid != null
+				&& (!s.raid.present() || s.raid.hadMost < s.raid.expected);
+		return forgiven ? "healthy" : "atrisk";
+	}
+
+	/**
+	 * Whether the UI shows the {@code repairing} drives as
+	 * {@code initializing}: a two-member mirror resyncing on a healthy
+	 * primary volume (class Javadoc). False when the raid block was not read.
+	 */
+	static boolean rebuildRelabel(Space s, List<Disk> disks) {
+		if (s == null || disks == null || s.raid == null || !s.raid.present()) return false;
+		if (!"healthy".equals(displayHealth(s)) || !"repairing".equals(s.action)) return false;
+		if (s.raid.expected != 2.0 || s.raid.hadMost < s.raid.expected) return false;
+		boolean normal = false;
+		boolean repairing = false;
+		for (Disk d : disks) {
+			if ("normal".equals(d.state)) normal = true;
+			if ("repairing".equals(d.state)) repairing = true;
+		}
+		return normal && repairing;
+	}
+
 	/** A reason as {@code type:level}; a missing part is left empty. */
 	static String reason(String type, String level) {
 		return (type == null ? "" : type) + ":" + (level == null ? "" : level);
@@ -144,6 +239,8 @@ final class NvrStorageHealth {
 		for (String r : d.reasons) {
 			if (RISK_REASONS.contains(r)) return true;
 		}
+		// The UI's spare_at_risk: a hot spare with any reason cannot serve.
+		if ("spare".equals(d.state) && !d.reasons.isEmpty()) return true;
 		return !OK_STATES.contains(d.state);
 	}
 
@@ -182,6 +279,15 @@ final class NvrStorageHealth {
 	 * healthy" about a drive it never saw.
 	 */
 	static Drives drives(List<Disk> disks) {
+		return drives(disks, false);
+	}
+
+	/**
+	 * As {@link #drives(List)}; with {@code relabel} ({@link #rebuildRelabel})
+	 * a {@code repairing} drive is counted, and named, as the UI shows it:
+	 * {@code initializing}.
+	 */
+	static Drives drives(List<Disk> disks, boolean relabel) {
 		if (disks == null) return null;
 		for (Disk d : disks) {
 			if (d.state == null || d.state.trim().isEmpty() || d.slot == null) return null;
@@ -194,7 +300,10 @@ final class NvrStorageHealth {
 		Disk first = null;
 		double bad = 0;
 		boolean badComplete = true;
-		for (Disk d : sorted) {
+		for (Disk raw : sorted) {
+			Disk d = relabel && "repairing".equals(raw.state)
+					? new Disk(raw.slot, "initializing", raw.health, raw.reasons, raw.badSectors)
+					: raw;
 			if (!isDrive(d)) continue;
 			count++;
 			if (d.badSectors == null) badComplete = false;

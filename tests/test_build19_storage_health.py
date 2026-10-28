@@ -28,14 +28,30 @@ def method_body(ret, name):
     return SRC[m.end():i]
 
 
-PROPERTIES = ("volume_health", "volume_issues", "volume_action", "volume_device",
+CLIENT = (ROOT / "src/com/vcfcf/adapters/unifi/UniFiApiClient.java").read_text()
+PROPERTIES = ("volume_health", "volume_display_health", "volume_issues", "volume_action", "volume_device",
               "unhealthy_drive_slot", "unhealthy_drive_state", "hard_drive_state")
 METRICS = ("drive_count", "drives_not_healthy", "drives_failed", "drive_bad_sectors")
 
 
 def main():
-    assert "collectNvrStorageHealth(nvr, out);" in method_body("void", "collectNvr")
+    assert ("collectNvrStorageHealth(nvr, s.systemUstorage, out);"
+            in method_body("void", "collectNvr"))
     body = method_body("void", "collectNvrStorageHealth")
+    # Review B2: the raid block comes from /api/system (GET), matched by device.
+    assert 'return get("/api/system");' in CLIENT
+    assert "api.system().get(\"ustorage\")" in SRC
+    assert "raidFor(vol.device, systemUstorage)" in body
+    assert "NvrStorageHealth.displayHealth(vol)" in body
+    assert "NvrStorageHealth.rebuildRelabel(vol, disks)" in body
+    raid = method_body("NvrStorageHealth.Raid", "raidFor")
+    assert "Raid.NONE" in raid and 'get("had_most")' in raid and 'get("expected")' in raid
+    # Review N3: no raw asString() in the storage path; scalars only.
+    assert ".asString()" not in body and ".asString()" not in raid, "use scalarText"
+    assert "j.isObject() || j.isList()" in method_body("String", "scalarText")
+    # Review N1: each unusable part is logged once per streak.
+    for part in ('"ustorage"', '"volume"', '"raid"', '"disks"'):
+        assert "storageNote(mac, " + part in body, part
     assert 'nvr.get("systemInfo").get("ustorage")' in body
     assert 'ustorage.get("space")' in body and 'ustorage.get("disks")' in body
     assert "NvrStorageHealth.primary(" in body and "NvrStorageHealth.drives(" in body
@@ -46,7 +62,7 @@ def main():
     for key in METRICS:
         assert re.search(r'metric(IfPresent)?\(out, "Storage\|' + key + '"', body), key
     # The drive summary publishes only inside the null guard.
-    guarded = body[body.index("if (drives != null) {"):]
+    guarded = body[body.index("if (drives == null) {"):]
     for key in METRICS + ("unhealthy_drive_slot", "unhealthy_drive_state"):
         assert '"Storage|' + key + '"' in guarded, key + " outside the guard"
 

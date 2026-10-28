@@ -151,6 +151,8 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 	 */
 	private final StreakLog streakLog = new StreakLog();
 	private static final String RENAME_STREAK = "rename";
+	/** Build 19 review B2: /api/system unread or without ustorage. */
+	private static final String SYSTEM_STREAK = "api-system";
 
 	/**
 	 * Issue #20: the kinds the last finished enumeration read in full
@@ -245,6 +247,11 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		// Build 15 (peer review 4): stat/sysinfo back-off after a refusal.
 		final SysinfoGate sysinfoGate = new SysinfoGate(
 				System::currentTimeMillis, AUTH_FAILURE_BACKOFF_MS);
+		// Build 19 review B2: the same back-off for /api/system.
+		final SysinfoGate systemGate = new SysinfoGate(
+				System::currentTimeMillis, AUTH_FAILURE_BACKOFF_MS, "/api/system",
+				"the NVR volume's RAID block is not read, so its display health "
+						+ "never forgives a missing drive");
 		final RefreshCache<List<UniFiStitcher.ForeignHost>> vmnicHosts =
 				new RefreshCache<>(System::currentTimeMillis, SLOW_REFRESH_MS,
 						SLOW_MAX_STALE_MS);
@@ -1602,7 +1609,7 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 			metric(out, "Storage|usage_pct", (storage.used / storage.total) * 100.0);
 			prop(out, "Storage|source", storage.source);
 		}
-		collectNvrStorageHealth(nvr, out);
+		collectNvrStorageHealth(nvr, s.systemUstorage, out);
 
 		prop(out, "Configuration|model", nvr.get("modelKey").asString(""));
 		prop(out, "Configuration|firmware", nvr.get("firmwareVersion").asString(""));
@@ -1632,13 +1639,29 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 	 * when present (see {@link NvrStorageHealth}). Fullness is not health:
 	 * Protect fills the volume to its retention limit by design, so these
 	 * are what the bundled storage alerts read, never usage_pct.
+	 *
+	 * <p>Review B2/W1/W3: {@code Storage|volume_display_health} is the
+	 * health the storage page displays, which needs the volume's
+	 * {@code raid} block from {@code /api/system} ({@code systemUstorage},
+	 * matched by device; null when not read). Review N1: a part that cannot
+	 * be used is logged once per streak, per NVR. Review N3: only scalar
+	 * JSON values are read as text.
 	 */
-	private static void collectNvrStorageHealth(SimpleJson nvr, List<MetricData> out) {
-		textPropIfPresent(out, "Storage|hard_drive_state", nvr.get("hardDriveState"));
+	private void collectNvrStorageHealth(SimpleJson nvr, SimpleJson systemUstorage,
+			List<MetricData> out) {
+		String mac = UniFiIds.mac(scalarText(nvr.get("mac")));
+		String hardDriveState = scalarText(nvr.get("hardDriveState"));
+		if (hardDriveState != null) prop(out, "Storage|hard_drive_state", hardDriveState);
 		SimpleJson ustorage = nvr.get("systemInfo").get("ustorage");
-		if (ustorage.isNull()) return;
+		if (!ustorage.isObject()) {
+			storageNote(mac, "ustorage", "the bootstrap carries no "
+					+ "nvr.systemInfo.ustorage object; no volume or drive health "
+					+ "is published");
+			return;
+		}
 
 		SimpleJson spaceList = ustorage.get("space");
+		NvrStorageHealth.Space vol = null;
 		if (spaceList.isList()) {
 			List<NvrStorageHealth.Space> spaces = new ArrayList<>();
 			for (SimpleJson sp : spaceList.asList()) {
@@ -1648,48 +1671,105 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 					reasons = new ArrayList<>();
 					for (SimpleJson r : rs.asList()) {
 						reasons.add(NvrStorageHealth.reason(
-								UniFiValues.text(r.get("type").asString()),
-								UniFiValues.text(r.get("level").asString())));
+								scalarText(r.get("type")), scalarText(r.get("level"))));
 					}
 				}
 				spaces.add(new NvrStorageHealth.Space(
-						UniFiValues.text(sp.get("space_type").asString()),
-						UniFiValues.text(sp.get("device").asString()),
-						UniFiValues.text(sp.get("health").asString()),
-						UniFiValues.text(sp.get("action").asString()),
+						scalarText(sp.get("space_type")),
+						scalarText(sp.get("device")),
+						scalarText(sp.get("health")),
+						scalarText(sp.get("action")),
 						reasons));
 			}
-			NvrStorageHealth.Space vol = NvrStorageHealth.primary(spaces);
-			if (vol != null) {
-				if (vol.health != null) prop(out, "Storage|volume_health", vol.health);
-				if (vol.action != null) prop(out, "Storage|volume_action", vol.action);
-				if (vol.device != null) prop(out, "Storage|volume_device", vol.device);
-				String issues = NvrStorageHealth.issues(vol);
-				if (issues != null) prop(out, "Storage|volume_issues", issues);
+			vol = NvrStorageHealth.primary(spaces);
+		}
+		if (vol == null) {
+			storageNote(mac, "volume", "no recording volume in ustorage.space "
+					+ "(no list, or no primary and not exactly one non-root, "
+					+ "non-swap space); no volume health is published");
+		} else {
+			vol = vol.withRaid(raidFor(vol.device, systemUstorage));
+			if (vol.raid == null && "atrisk".equals(vol.health)) {
+				storageNote(mac, "raid", "the RAID block of volume " + vol.device
+						+ " was not read from /api/system; its display health "
+						+ "does not apply the missing-drive exception");
 			}
+			if (vol.health != null) prop(out, "Storage|volume_health", vol.health);
+			String display = NvrStorageHealth.displayHealth(vol);
+			if (display != null) prop(out, "Storage|volume_display_health", display);
+			if (vol.action != null) prop(out, "Storage|volume_action", vol.action);
+			if (vol.device != null) prop(out, "Storage|volume_device", vol.device);
+			String issues = NvrStorageHealth.issues(vol);
+			if (issues != null) prop(out, "Storage|volume_issues", issues);
 		}
 
 		SimpleJson diskList = ustorage.get("disks");
+		NvrStorageHealth.Drives drives = null;
 		if (diskList.isList()) {
 			List<NvrStorageHealth.Disk> disks = new ArrayList<>();
 			for (SimpleJson d : diskList.asList()) {
 				disks.add(new NvrStorageHealth.Disk(
-						UniFiValues.number(d.get("slot").asString()),
-						UniFiValues.text(d.get("state").asString()),
-						UniFiValues.text(d.get("health").asString()),
+						UniFiValues.number(scalarText(d.get("slot"))),
+						scalarText(d.get("state")),
+						scalarText(d.get("health")),
 						diskReasons(d.get("reason")),
-						UniFiValues.number(d.get("bad_sector").asString())));
+						UniFiValues.number(scalarText(d.get("bad_sector")))));
 			}
-			NvrStorageHealth.Drives drives = NvrStorageHealth.drives(disks);
-			if (drives != null) {
-				metric(out, "Storage|drive_count", drives.count);
-				metric(out, "Storage|drives_not_healthy", drives.notHealthy);
-				metric(out, "Storage|drives_failed", drives.failed);
-				prop(out, "Storage|unhealthy_drive_slot", drives.firstSlot);
-				prop(out, "Storage|unhealthy_drive_state", drives.firstState);
-				metricIfPresent(out, "Storage|drive_bad_sectors", drives.badSectors);
-			}
+			drives = NvrStorageHealth.drives(disks,
+					NvrStorageHealth.rebuildRelabel(vol, disks));
 		}
+		if (drives == null) {
+			storageNote(mac, "disks", "ustorage.disks is not a list, or an entry "
+					+ "has no state or slot; no drive counts are published");
+		} else {
+			metric(out, "Storage|drive_count", drives.count);
+			metric(out, "Storage|drives_not_healthy", drives.notHealthy);
+			metric(out, "Storage|drives_failed", drives.failed);
+			prop(out, "Storage|unhealthy_drive_slot", drives.firstSlot);
+			prop(out, "Storage|unhealthy_drive_state", drives.firstState);
+			metricIfPresent(out, "Storage|drive_bad_sectors", drives.badSectors);
+		}
+	}
+
+	/** Review N1: one INFO per streak, per NVR and part. */
+	private void storageNote(String nvrMac, String part, String message) {
+		if (streakLog.fail("nvr-ustorage|" + nvrMac + "|" + part)) {
+			logInfo("collect: NVR " + nvrMac + ": " + message
+					+ " (logged once until a cycle without it)");
+		}
+	}
+
+	/**
+	 * Review B2: the {@code raid} block of the {@code /api/system} space
+	 * with this device: {@link NvrStorageHealth.Raid#NONE} when that record
+	 * has none, {@code null} (unread) when /api/system was not read, the
+	 * device is unknown or not listed, or the block lacks numeric
+	 * {@code expected} and {@code had_most}.
+	 */
+	static NvrStorageHealth.Raid raidFor(String device, SimpleJson systemUstorage) {
+		if (device == null || systemUstorage == null) return null;
+		SimpleJson spaces = systemUstorage.get("space");
+		if (!spaces.isList()) return null;
+		for (SimpleJson sp : spaces.asList()) {
+			if (!device.equals(scalarText(sp.get("device")))) continue;
+			SimpleJson raid = sp.get("raid");
+			if (raid.isNull()) return NvrStorageHealth.Raid.NONE;
+			if (!raid.isObject()) return null;
+			return NvrStorageHealth.Raid.of(
+					UniFiValues.number(scalarText(raid.get("expected"))),
+					UniFiValues.number(scalarText(raid.get("had_most"))));
+		}
+		return null;
+	}
+
+	/**
+	 * Review N3: a JSON scalar's text, trimmed, or {@code null} when absent,
+	 * blank, an object or a list (whose {@code toString} would publish
+	 * {@code {...}} as Protect's word).
+	 */
+	static String scalarText(SimpleJson j) {
+		if (j.isObject() || j.isList()) return null;
+		return UniFiValues.text(j.asString());
 	}
 
 	/**
@@ -1703,8 +1783,7 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		List<SimpleJson> items = reason.isList() ? reason.asList()
 				: java.util.Collections.singletonList(reason);
 		for (SimpleJson r : items) {
-			String name = r.isObject() ? UniFiValues.text(r.get("type").asString())
-					: UniFiValues.text(r.asString());
+			String name = r.isObject() ? scalarText(r.get("type")) : scalarText(r);
 			if (name != null) names.add(name);
 		}
 		return names;
@@ -2180,6 +2259,9 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		// the call failed or carried no record.
 		SimpleJson sysinfo;
 		SimpleJson protect; // nullable — Protect optional
+		// Build 19 review B2: UniFi OS /api/system ustorage, for the NVR
+		// volume's raid block; null when not read this build.
+		SimpleJson systemUstorage;
 
 		// Build 14 (issue #19): sites whose stat/device failed this cycle,
 		// site name to reason. Their resources fail (ERROR) instead of
@@ -2371,6 +2453,32 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 				throw e;
 			} catch (Exception e) {
 				adapter.logInfo("Snapshot: Protect not available: " + e.getMessage());
+			}
+
+			// Build 19 review B2: /api/system, read only when Protect sent an
+			// NVR, for the raid block of its volume (the bootstrap trims it).
+			// A failure costs the display health's lacking_disk exception,
+			// nothing else: logged once per streak, and an auth-class refusal
+			// is not asked again for 15 minutes (SysinfoGate).
+			if (s.protect != null && c.systemGate.shouldAsk(adapter::logInfo)) {
+				try {
+					SimpleJson us = api.system().get("ustorage");
+					if (us.isObject()) {
+						s.systemUstorage = us;
+					} else if (adapter.streakLog.fail(SYSTEM_STREAK)) {
+						adapter.logInfo("Snapshot: /api/system carried no ustorage "
+								+ "object; the NVR volume's RAID block is not read "
+								+ "(logged once until a cycle without it)");
+					}
+				} catch (InterruptedException e) {
+					throw e;
+				} catch (Exception e) {
+					c.systemGate.failed(e, adapter::logWarn, msg -> {
+						if (adapter.streakLog.fail(SYSTEM_STREAK)) {
+							adapter.logInfo(msg + " (logged once until a cycle without it)");
+						}
+					});
+				}
 			}
 
 			adapter.logInfo("UniFi API snapshot: " + siteData.size() + " sites / "

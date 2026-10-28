@@ -78,6 +78,17 @@ public final class UniFiApiClient {
 		return get("/proxy/protect/api/bootstrap");
 	}
 
+	// --- UniFi OS ---
+
+	/**
+	 * Build 19 review B2: UniFi OS console information, read (GET only) for
+	 * {@code ustorage.space[].raid}, which the Protect bootstrap trims and
+	 * the storage page's display health needs.
+	 */
+	public SimpleJson system() throws IOException, InterruptedException {
+		return get("/api/system");
+	}
+
 	// --- HTTP ---
 
 	private SimpleJson get(String path) throws IOException, InterruptedException {

@@ -4,7 +4,9 @@ The first cycle after upgrading to build 18 renames every existing switch
 port, WAN interface, radio and Wireless Summary to `<label> (<parent>)`
 (for example `Port 3 (<switch>)`). History is kept, but saved searches,
 custom groups, views filtered by name and notification rules keyed on the
-old names need updating. See [README.md, Upgrading to build 18](../README.md#upgrading-to-build-18).
+old names need updating. A device renamed on the controller since it was
+first discovered takes its current name too (devel: "udm" became
+"Bentwood"), so check name-keyed device filters as well. See [README.md, Upgrading to build 18](../README.md#upgrading-to-build-18).
 
 ### Alerts
 

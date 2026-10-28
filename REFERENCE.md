@@ -468,23 +468,30 @@ Generated from `describe.xml` and `resources.properties` for build 18 (dev 0.0.0
 **Name**: UniFi Controller Infrastructure
 
 ```
-unifi_controller
-    └── UniFi World
-        └── UniFi Site
-            ├── UniFi Gateway
-            │   ├── UniFi WAN Interface
-            │   ├── UniFi Switch (nested) ...
-            │   └── UniFi Access Point (nested) ...
-            ├── UniFi Switch (nested: a switch under a switch, any depth)
-            │   ├── UniFi Switch Port
-            │   └── UniFi Access Point (nested: an AP under an AP, any depth)
-            │       └── UniFi Radio
-            ├── UniFi Access Point (nested)
-            │   └── UniFi Radio
-            ├── UniFi NVR
-            │   └── UniFi Camera
-            └── UniFi Wireless Summary
+UniFi World
+    └── UniFi Site
+        ├── UniFi Gateway
+        │   ├── UniFi WAN Interface
+        │   ├── UniFi Switch (nested) ...
+        │   └── UniFi Access Point (nested) ...
+        ├── UniFi Switch (nested: a switch under a switch, any depth)
+        │   ├── UniFi Switch Port
+        │   └── UniFi Access Point (nested: an AP under an AP, any depth)
+        │       └── UniFi Radio
+        ├── UniFi Access Point (nested)
+        │   └── UniFi Radio
+        ├── UniFi NVR
+        │   └── UniFi Camera
+        └── UniFi Wireless Summary
 ```
+
+The spec is rooted at the World kind (`rootResourceKind="UniFiWorld"`, each
+path starting `unifi_controller::UniFiWorld||unifi_controller::UniFiSite::child||...`),
+as VMware's own vSphere adapter roots "vSphere Hosts and Clusters" at
+`VMWARE::vSphere World`. Up to build 17 it was rooted at the adapter instance
+kind; the instance resource has no children (its only parent is Universe), so
+the tree showed the instance and nothing under it (devel and devel_9_1,
+2026-10-28). The adapter instance is not linked to the World.
 
 Build 18 (issue #15): a switch or access point is a child of the device
 it uplinks to (`uplink.uplink_mac`), so the tree follows the cabling and a

@@ -71,7 +71,7 @@ def uplink_tree():
 
     def kinds(p):
         return [seg.split("::")[1] + ("*" if seg.endswith("/recursive") else "")
-                for seg in p.split("||")[3:]]
+                for seg in p.split("||")[2:]]
 
     shapes = {tuple(kinds(p)) for p in paths}
     want = {
@@ -87,9 +87,14 @@ def uplink_tree():
     }
     assert shapes == want, f"traversal shapes differ: {shapes ^ want}"
     for p in paths:
-        assert p.startswith("unifi_controller::unifi_controller||"
-                            "unifi_controller::UniFiWorld::child||"
+        # Rooted at the World kind, as VMWARE's "vSphere World" spec: the
+        # adapter instance resource has no children, so a path that starts
+        # there never reaches the World.
+        assert p.startswith("unifi_controller::UniFiWorld||"
                             "unifi_controller::UniFiSite::child||"), p
+    spec = next(iter(root.iter(ns + "TraversalSpecKind")), None) or \
+        next(iter(root.iter("TraversalSpecKind")))
+    assert spec.get("rootResourceKind") == "UniFiWorld", spec.get("rootResourceKind")
 
 
 def names():

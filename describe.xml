@@ -440,9 +440,17 @@
 		<TraversalSpecKind name="UniFi Controller Infrastructure"
 		                   nameKey="280"
 		                   rootAdapterKind="unifi_controller"
-		                   rootResourceKind="unifi_controller"
+		                   rootResourceKind="UniFiWorld"
 		                   filterType="GENERIC_RELATION"
 		                   usedFor="ALL">
+			<!-- Build 18 (traversal root): the spec roots at UniFiWorld, as
+			     VMWARE roots "vSphere Hosts and Clusters" at "vSphere World"
+			     (each path starts at the root kind itself, no ::child). Up to
+			     build 17 it rooted at the adapter instance kind, whose resource has no
+			     children (its only parent is Universe), so the first hop to
+			     UniFiWorld never matched and the tree stopped at the instance.
+			     The instance is not linked to the World: no such edge exists in
+			     the collected data. -->
 			<!-- Build 18 (issue #15): a device hangs under its uplink device
 			     (uplink.uplink_mac) when the pair fits Gateway > Switch* >
 			     Access Point*, else under the Site (UplinkTree). "/recursive"
@@ -461,23 +469,23 @@
 			     Access Point), and an access point behind an in-wall access
 			     point. -->
 			<!-- World > Site > Gateway > WAN Interface -->
-			<ResourcePath path="unifi_controller::unifi_controller||unifi_controller::UniFiWorld::child||unifi_controller::UniFiSite::child||unifi_controller::UniFiGateway::child||unifi_controller::UniFiWanInterface::child"/>
+			<ResourcePath path="unifi_controller::UniFiWorld||unifi_controller::UniFiSite::child||unifi_controller::UniFiGateway::child||unifi_controller::UniFiWanInterface::child"/>
 			<!-- World > Site > Gateway > Switch (nested) > Switch Port -->
-			<ResourcePath path="unifi_controller::unifi_controller||unifi_controller::UniFiWorld::child||unifi_controller::UniFiSite::child||unifi_controller::UniFiGateway::child||unifi_controller::UniFiSwitch::child/recursive||unifi_controller::UniFiSwitchPort::child"/>
+			<ResourcePath path="unifi_controller::UniFiWorld||unifi_controller::UniFiSite::child||unifi_controller::UniFiGateway::child||unifi_controller::UniFiSwitch::child/recursive||unifi_controller::UniFiSwitchPort::child"/>
 			<!-- World > Site > Gateway > Switch (nested) > Access Point (nested) > Radio -->
-			<ResourcePath path="unifi_controller::unifi_controller||unifi_controller::UniFiWorld::child||unifi_controller::UniFiSite::child||unifi_controller::UniFiGateway::child||unifi_controller::UniFiSwitch::child/recursive||unifi_controller::UniFiAccessPoint::child/recursive||unifi_controller::UniFiRadio::child"/>
+			<ResourcePath path="unifi_controller::UniFiWorld||unifi_controller::UniFiSite::child||unifi_controller::UniFiGateway::child||unifi_controller::UniFiSwitch::child/recursive||unifi_controller::UniFiAccessPoint::child/recursive||unifi_controller::UniFiRadio::child"/>
 			<!-- World > Site > Gateway > Access Point (nested) > Radio -->
-			<ResourcePath path="unifi_controller::unifi_controller||unifi_controller::UniFiWorld::child||unifi_controller::UniFiSite::child||unifi_controller::UniFiGateway::child||unifi_controller::UniFiAccessPoint::child/recursive||unifi_controller::UniFiRadio::child"/>
+			<ResourcePath path="unifi_controller::UniFiWorld||unifi_controller::UniFiSite::child||unifi_controller::UniFiGateway::child||unifi_controller::UniFiAccessPoint::child/recursive||unifi_controller::UniFiRadio::child"/>
 			<!-- World > Site > Switch (nested) > Switch Port: no gateway in the site, or a fallback -->
-			<ResourcePath path="unifi_controller::unifi_controller||unifi_controller::UniFiWorld::child||unifi_controller::UniFiSite::child||unifi_controller::UniFiSwitch::child/recursive||unifi_controller::UniFiSwitchPort::child"/>
+			<ResourcePath path="unifi_controller::UniFiWorld||unifi_controller::UniFiSite::child||unifi_controller::UniFiSwitch::child/recursive||unifi_controller::UniFiSwitchPort::child"/>
 			<!-- World > Site > Switch (nested) > Access Point (nested) > Radio -->
-			<ResourcePath path="unifi_controller::unifi_controller||unifi_controller::UniFiWorld::child||unifi_controller::UniFiSite::child||unifi_controller::UniFiSwitch::child/recursive||unifi_controller::UniFiAccessPoint::child/recursive||unifi_controller::UniFiRadio::child"/>
+			<ResourcePath path="unifi_controller::UniFiWorld||unifi_controller::UniFiSite::child||unifi_controller::UniFiSwitch::child/recursive||unifi_controller::UniFiAccessPoint::child/recursive||unifi_controller::UniFiRadio::child"/>
 			<!-- World > Site > Access Point (nested) > Radio -->
-			<ResourcePath path="unifi_controller::unifi_controller||unifi_controller::UniFiWorld::child||unifi_controller::UniFiSite::child||unifi_controller::UniFiAccessPoint::child/recursive||unifi_controller::UniFiRadio::child"/>
+			<ResourcePath path="unifi_controller::UniFiWorld||unifi_controller::UniFiSite::child||unifi_controller::UniFiAccessPoint::child/recursive||unifi_controller::UniFiRadio::child"/>
 			<!-- World > Site > NVR > Camera -->
-			<ResourcePath path="unifi_controller::unifi_controller||unifi_controller::UniFiWorld::child||unifi_controller::UniFiSite::child||unifi_controller::UniFiNvr::child||unifi_controller::UniFiCamera::child"/>
+			<ResourcePath path="unifi_controller::UniFiWorld||unifi_controller::UniFiSite::child||unifi_controller::UniFiNvr::child||unifi_controller::UniFiCamera::child"/>
 			<!-- World > Site > Wireless Aggregate -->
-			<ResourcePath path="unifi_controller::unifi_controller||unifi_controller::UniFiWorld::child||unifi_controller::UniFiSite::child||unifi_controller::UniFiWirelessAggregate::child"/>
+			<ResourcePath path="unifi_controller::UniFiWorld||unifi_controller::UniFiSite::child||unifi_controller::UniFiWirelessAggregate::child"/>
 		</TraversalSpecKind>
 	</TraversalSpecKinds>
 

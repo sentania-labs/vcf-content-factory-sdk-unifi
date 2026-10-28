@@ -59,8 +59,11 @@ every existing switch port, WAN interface, radio and Wireless Summary to
 their identity and their metric history; only the name changes. Anything
 keyed on the old names stops matching and needs updating: saved searches,
 custom groups and views filtered by name, and notification rules. Later
-renames on the controller carry over the same way. Details: REFERENCE.md,
-Object names.
+renames on the controller carry over the same way. Devices are renamed too
+when their name on the controller changed after VCF Operations first
+discovered them: on devel the gateway first seen as "udm" became "Bentwood"
+on the first build 18 cycle. Filters, groups and rules keyed on device names
+need the same check. Details: REFERENCE.md, Object names.
 
 ## Configuration
 

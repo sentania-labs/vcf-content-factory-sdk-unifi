@@ -8,8 +8,8 @@ cancel_cycles: 3
 condition:
   type: property
   key: Storage|volume_display_health
-  operator: NOT_REGEX
-  value: "^(healthy|atrisk|failed)$"
+  operator: REGEX
+  value: "^(?!(healthy|atrisk|failed)$).*"
 
 description: >
   Triggers when the NVR volume health that Protect's storage page displays (Storage|volume_display_health) is not one of healthy, atrisk or failed, so a new or unexpected state is not silently missed.

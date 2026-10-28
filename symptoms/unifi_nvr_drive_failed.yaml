@@ -1,0 +1,15 @@
+name: "[VCF Content Factory] UniFi NVR Drive Failed"
+adapter_kind: unifi_controller
+resource_kind: UniFiNvr
+severity: CRITICAL
+wait_cycles: 3
+cancel_cycles: 3
+
+condition:
+  type: metric_static
+  key: Storage|drives_failed
+  operator: GT
+  value: 0
+
+description: >
+  Triggers when one or more NVR drives are failed (Storage|drives_failed above 0).

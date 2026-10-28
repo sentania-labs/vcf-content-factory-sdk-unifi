@@ -1,0 +1,15 @@
+name: "[VCF Content Factory] UniFi NVR Drive Not Healthy"
+adapter_kind: unifi_controller
+resource_kind: UniFiNvr
+severity: WARNING
+wait_cycles: 3
+cancel_cycles: 3
+
+condition:
+  type: metric_static
+  key: Storage|drives_not_healthy
+  operator: GT
+  value: 0
+
+description: >
+  Triggers when one or more NVR drives are not healthy (Storage|drives_not_healthy above 0).

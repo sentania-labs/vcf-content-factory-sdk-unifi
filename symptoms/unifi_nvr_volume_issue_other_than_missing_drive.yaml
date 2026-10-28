@@ -1,0 +1,15 @@
+name: "[VCF Content Factory] UniFi NVR Volume Issue Other Than Missing Drive"
+adapter_kind: unifi_controller
+resource_kind: UniFiNvr
+severity: INFO
+wait_cycles: 3
+cancel_cycles: 3
+
+condition:
+  type: property
+  key: Storage|volume_issues
+  operator: NOT_EQ
+  value: "lacking_disk:atrisk"
+
+description: >
+  Triggers when the NVR volume issue list (Storage|volume_issues) is anything other than lacking_disk:atrisk. Used only ANDed with NVR Volume At Risk, matching the Protect UI exception for a missing drive.

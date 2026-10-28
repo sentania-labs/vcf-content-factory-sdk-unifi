@@ -414,11 +414,12 @@ Generated from `describe.xml` and `resources.properties` for build 18 (dev 0.0.0
 > recording NVR (devel: 99.1 %).
 
 > Build 19: **storage health**, from the bootstrap's `nvr.systemInfo.ustorage`
-> (the same block UniFi OS serves at `/api/system` as `ustorage`), values
+> (a trimmed copy of UniFi OS `/api/system` `ustorage`), values
 > verbatim and each only when Protect sends it. The volume is the
 > `space[]` entry with `space_type` `primary`, else the only one that is
-> neither `root` nor `swap` (the UniFi OS storage page's choice); nothing is
-> published when there is no such one. `volume_health` is its `health`:
+> neither `root` nor `swap`, else, when no entry carries a `space_type`, the
+> first (the UniFi OS storage page's choice); nothing is published when none
+> of these picks one. `volume_health` is its `health`:
 > `health` (Protect's word for healthy; the UI also accepts `healthy`),
 > `atrisk` (UI: "Storage At Risk of Failure", orange) or `failed` ("Storage
 > has Failed", red). `volume_issues` is its `reasons[]` as `type:level`,
@@ -481,8 +482,8 @@ Generated from `describe.xml` and `resources.properties` for build 18 (dev 0.0.0
 > known, so no alert reads it.
 >
 > A part of `ustorage` the pack cannot use (no `ustorage` object, no
-> recording volume, a disk list it cannot read in full, or an `atrisk`
-> volume whose RAID block was not read) is logged at INFO once per streak of
+> recording volume, a volume with no `health`, a disk list it cannot read in
+> full, or an `atrisk` volume whose RAID block was not read) is logged at INFO once per streak of
 > cycles, per NVR. Only JSON scalars are read as text: an object or list
 > where Protect's word is expected publishes nothing.
 
@@ -831,7 +832,7 @@ these alerts read is published only when the controller sends its field
 | UniFi WAN Link Up | UniFi WAN Interface | Info | property `Status\|up` = `true` (scoping only) |
 | UniFi NVR Volume Failed | UniFi NVR | Critical | property `Storage\|volume_display_health` = `failed` |
 | UniFi NVR Volume At Risk | UniFi NVR | Warning | property `Storage\|volume_display_health` = `atrisk` |
-| UniFi NVR Volume Health Unrecognised | UniFi NVR | Warning | property `Storage\|volume_display_health` does not match `^(healthy\|atrisk\|failed)$` |
+| UniFi NVR Volume Health Unrecognised | UniFi NVR | Warning | property `Storage\|volume_display_health` matches `^(?!(healthy\|atrisk\|failed)$).*` (regex with a negative lookahead: any value but those three) |
 | UniFi NVR Drive Failed | UniFi NVR | Critical | metric `Storage\|drives_failed` > 0 |
 | UniFi NVR Drive Not Healthy | UniFi NVR | Warning | metric `Storage\|drives_not_healthy` > 0 |
 

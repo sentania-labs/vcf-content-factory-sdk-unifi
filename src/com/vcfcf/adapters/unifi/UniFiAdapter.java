@@ -1694,7 +1694,12 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 						+ " was not read from /api/system; its display health "
 						+ "does not apply the missing-drive exception");
 			}
-			if (vol.health != null) prop(out, "Storage|volume_health", vol.health);
+			if (vol.health == null) {
+				storageNote(mac, "health", "volume " + vol.device + " carries no "
+						+ "health; no volume or display health is published");
+			} else {
+				prop(out, "Storage|volume_health", vol.health);
+			}
 			String display = NvrStorageHealth.displayHealth(vol);
 			if (display != null) prop(out, "Storage|volume_display_health", display);
 			if (vol.action != null) prop(out, "Storage|volume_action", vol.action);

@@ -50,8 +50,12 @@ def main():
     assert ".asString()" not in body and ".asString()" not in raid, "use scalarText"
     assert "j.isObject() || j.isList()" in method_body("String", "scalarText")
     # Review N1: each unusable part is logged once per streak.
-    for part in ('"ustorage"', '"volume"', '"raid"', '"disks"'):
+    for part in ('"ustorage"', '"volume"', '"raid"', '"health"', '"disks"'):
         assert "storageNote(mac, " + part in body, part
+    # Review R2-W2: a volume with no health is logged, and nothing is published for it.
+    nohealth = body[body.index("if (vol.health == null) {"):]
+    assert nohealth.index('storageNote(mac, "health"') < nohealth.index('"Storage|volume_health"')
+    assert "} else {" in nohealth[:nohealth.index('"Storage|volume_health"')]
     assert 'nvr.get("systemInfo").get("ustorage")' in body
     assert 'ustorage.get("space")' in body and 'ustorage.get("disks")' in body
     assert "NvrStorageHealth.primary(" in body and "NvrStorageHealth.drives(" in body

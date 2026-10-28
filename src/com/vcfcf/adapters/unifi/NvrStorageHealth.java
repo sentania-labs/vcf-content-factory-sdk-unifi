@@ -150,8 +150,9 @@ final class NvrStorageHealth {
 	/**
 	 * The recording volume, chosen as the UniFi OS storage page chooses it:
 	 * the {@code primary} space, else the only space that is neither
-	 * {@code root} nor {@code swap}; {@code null} when there is no such one
-	 * space.
+	 * {@code root} nor {@code swap}; when no space carries a
+	 * {@code space_type} at all, the first space (the UI's third branch).
+	 * {@code null} when none of these picks one.
 	 */
 	static Space primary(List<Space> spaces) {
 		if (spaces == null) return null;
@@ -165,7 +166,12 @@ final class NvrStorageHealth {
 			only = s;
 			n++;
 		}
-		return n == 1 ? only : null;
+		if (n == 1) return only;
+		boolean anyType = false;
+		for (Space s : spaces) {
+			if (s.spaceType != null) anyType = true;
+		}
+		return !anyType && !spaces.isEmpty() ? spaces.get(0) : null;
 	}
 
 	/**
@@ -215,7 +221,9 @@ final class NvrStorageHealth {
 		boolean normal = false;
 		boolean repairing = false;
 		for (Disk d : disks) {
-			if ("normal".equals(d.state)) normal = true;
+			// Review R2-N1: the UI tests the state after its drive transform,
+			// where a normal drive at risk is already "risk".
+			if ("normal".equals(d.state) && !notHealthy(d)) normal = true;
 			if ("repairing".equals(d.state)) repairing = true;
 		}
 		return normal && repairing;

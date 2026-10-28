@@ -59,6 +59,10 @@ public final class NvrStorageHealthTest {
 				"two candidates and no primary: none");
 		T.eq(null, NvrStorageHealth.primary(Arrays.asList(space("root", "health", null))),
 				"root only: none");
+		// Review R2-N2: no space carries a space_type, so the UI takes the first.
+		NvrStorageHealth.Space first = space(null, "health", null);
+		T.check(NvrStorageHealth.primary(Arrays.asList(first, space(null, "atrisk", null))) == first,
+				"untyped spaces: the first");
 	}
 
 	static void issuesShapes() {
@@ -220,6 +224,10 @@ public final class NvrStorageHealthTest {
 				"health", "none", null, ONCE_COMPLETE), disks), "no repair running");
 		T.check(!NvrStorageHealth.rebuildRelabel(resync,
 				Arrays.asList(disk(1.0, "repairing"), disk(2.0, "repairing"))), "no normal drive");
+		// Review R2-N1: a normal drive the UI shows at risk is not the healthy half.
+		T.check(!NvrStorageHealth.rebuildRelabel(resync, Arrays.asList(
+				new NvrStorageHealth.Disk(1.0, "normal", "at_risk", null, 0.0), disk(2.0, "repairing"))),
+				"the normal drive is at risk");
 		T.check(!NvrStorageHealth.rebuildRelabel(null, disks), "no volume");
 	}
 

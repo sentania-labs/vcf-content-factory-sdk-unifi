@@ -9,7 +9,8 @@ import java.io.IOException;
 import java.net.http.HttpResponse;
 
 /**
- * Wraps the UniFi Network (classic) and Protect REST APIs.
+ * Wraps the UniFi OS console's Network application and Protect REST APIs
+ * (UniFi OS only; build 18, issue #17: classic controllers are not supported).
  *
  * <p><b>v2 logging.</b> The logger is the framework instance logger supplied via
  * {@code VcfCfAdapter.componentLogger(UniFiApiClient.class)} — a
@@ -104,7 +105,8 @@ public final class UniFiApiClient {
 			throw new UniFiHttpException("UniFi login failed: HTTP "
 					+ resp.statusCode(), resp.statusCode(), true);
 		}
-		// UniFi OS sets TOKEN; classic controllers set unifises.
+		// UniFi OS sets TOKEN. The unifises fallback is a classic controller's
+		// cookie, left from v1; classic controllers are not supported (#17).
 		String token = extractCookie(resp, "TOKEN");
 		if (token == null) token = extractCookie(resp, "unifises");
 		if (token == null) {

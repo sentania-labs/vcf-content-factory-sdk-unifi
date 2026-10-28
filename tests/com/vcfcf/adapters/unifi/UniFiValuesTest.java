@@ -16,6 +16,7 @@ public final class UniFiValuesTest {
 		poeBudgetUsedPct();
 		flagAbsentIsNotFalse();
 		recordingModeText();
+		nvrStorage();
 		System.out.println("UniFiValuesTest: all assertions passed");
 	}
 
@@ -178,5 +179,35 @@ public final class UniFiValuesTest {
 		T.eq(null, UniFiValues.text(null), "absent");
 		T.eq(null, UniFiValues.text(""), "empty");
 		T.eq(null, UniFiValues.text("   "), "blank");
+	}
+
+	/**
+	 * Build 18 (issue #39): numbers from the devel UDM Pro's Protect
+	 * bootstrap, 2026-10-28 (Protect 7.3.70). systemInfo.storage: size
+	 * 9912161972224, used 9822262308864 (available 89899663360; the three
+	 * add up, and the console's primary space reports the same total as
+	 * total_bytes, so bytes). storageStats.recordingSpace: total
+	 * 9877802233856, used 9839457505280.
+	 */
+	static void nvrStorage() {
+		double[] v = UniFiValues.nvrStorage(9912161972224.0, 9822262308864.0,
+				9877802233856.0, 9839457505280.0);
+		T.eq(9912161972224.0, v[0], "volume total first");
+		T.eq(9822262308864.0, v[1], "volume used first");
+		T.check(Math.abs(v[1] / v[0] * 100.0 - 99.093) < 0.001, "usage 99.09 %");
+		double[] r = UniFiValues.nvrStorage(null, null,
+				9877802233856.0, 9839457505280.0);
+		T.eq(9877802233856.0, r[0], "recording space when no volume pair");
+		T.eq(9839457505280.0, r[1], "recording used");
+		double[] mixed = UniFiValues.nvrStorage(9912161972224.0, null,
+				null, 9839457505280.0);
+		T.eq(null, mixed, "a total and a used from different sources are never combined");
+		double[] half = UniFiValues.nvrStorage(9912161972224.0, null,
+				9877802233856.0, 9839457505280.0);
+		T.eq(9877802233856.0, half[0], "half a volume pair falls back whole");
+		T.eq(null, UniFiValues.nvrStorage(null, null, null, null), "nothing sent");
+		T.eq(null, UniFiValues.nvrStorage(0.0, 0.0, null, null), "total 0 is unusable");
+		T.eq(null, UniFiValues.nvrStorage(100.0, -1.0, null, null), "negative used");
+		T.eq(0.0, UniFiValues.nvrStorage(100.0, 0.0, null, null)[1], "empty disk is a real 0");
 	}
 }

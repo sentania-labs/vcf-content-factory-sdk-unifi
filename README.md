@@ -1,6 +1,6 @@
 # VCF Content Factory UniFi Controller
 
-Monitors UniFi infrastructure via the classic Network API and Protect API. Discovers sites, gateways, switches, access points, NVR, and cameras. Per-switch-port and per-AP-radio child objects with PoE tracking. Switch ports are linked to the ESXi hosts cabled to them from the vCenter side: each host's vmnic LLDP neighbour (published by vCenter) is matched to the UniFi switch and port, read over the VCF Operations Suite API on the collector (optional; skipped where the collector has no local Suite API access). Replaces the Tier 1 UniFi Network and UniFi Network Integration management packs.
+Monitors UniFi infrastructure on a **UniFi OS console** (for example UDM, UDM Pro, UDR, Cloud Gateway or Cloud Key Gen2 Plus) through its Network application and Protect APIs. Classic and self-hosted UniFi Network controllers are not supported. Discovers sites, gateways, switches, access points, NVR, and cameras. Per-switch-port and per-AP-radio child objects with PoE tracking. Switch ports are linked to the ESXi hosts cabled to them from the vCenter side: each host's vmnic LLDP neighbour (published by vCenter) is matched to the UniFi switch and port, read over the VCF Operations Suite API on the collector (optional; skipped where the collector has no local Suite API access). Replaces the Tier 1 UniFi Network and UniFi Network Integration management packs.
 
 ## Documentation
 
@@ -17,9 +17,9 @@ must be on for each install or upgrade of an unsigned pak:
 2. Administrator Settings, Security Settings: click **Activate Unsigned PAK
    Installation** on 9.1 (**Enable Unsigned PAK Installation** on 9.0). The
    change is refused while any cluster node is down.
-3. When uploading the pak (**Administration > Integrations > Repository >
-   Add**), tick **Ignore the PAK file signature checking**. The box only
-   appears once the setting is on.
+3. When uploading the pak (**Repository** tab of Integrations, see
+   Installation below), tick **Ignore the PAK file signature checking**. The
+   box only appears once the setting is on.
 
 With the setting off, the install fails with
 `unsigned_pak_installation.not.allowed`. This is a cluster-wide security
@@ -28,13 +28,31 @@ it deliberately and consider turning it off again after installing. If you do,
 it has to go back on before you install the next build. Upgraded appliances
 keep whatever state the setting had before the upgrade.
 
+## Supported configuration
+
+- **UniFi OS consoles only**: the console's own login (`/api/auth/login`)
+  and its Network application (`/proxy/network`), plus Protect when it is
+  installed. Classic and self-hosted UniFi Network controllers (the Network
+  Application on its own server, usually on port 8443) are not supported;
+  Test Connection fails with "This adapter supports UniFi OS consoles only"
+  when the host answers 404 on either path.
+
 ## Installation
 
-Upload the `.pak` file via **Administration > Integrations > Repository > Add** in VCF Operations (9.x; on 8.x, **Data Sources > Integrations > Repository**).
+Install the pak from the **Repository** tab and create the adapter instance
+under the **Accounts** tab, both under Integrations (paths checked
+2026-10-28; no supported release has a Data Sources menu item):
+
+| VCF Operations | Integrations is at | Then |
+|---|---|---|
+| 9.1.1 | **Operate** tab > **Administration** > **Integrations** | **Accounts** tab (opens by default) or **Repository** tab |
+| 9.0.2, 8.18.7 | **Administration** > **Integrations** | **Accounts** or **Repository** |
+
+Upload the `.pak` file under **Repository > Add**.
 
 ## Configuration
 
-Create an adapter instance under **Administration > Integrations > Accounts > Add Account** (9.x; on 8.x, **Data Sources > Integrations > Accounts**) and provide:
+Create an adapter instance under **Accounts > Add Account** (Integrations, as above) and provide:
 
 | Field | Description | Default |
 |---|---|---|

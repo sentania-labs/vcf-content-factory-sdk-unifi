@@ -153,4 +153,32 @@ final class UniFiFailures {
 		}
 		return sb.toString();
 	}
+
+	/**
+	 * Build 18 (issue #17): the Test Connection message when {@code t}'s
+	 * cause chain holds an HTTP 404 from the controller, or {@code null}.
+	 * The adapter speaks only the UniFi OS layout (login at
+	 * {@code /api/auth/login}, Network under {@code /proxy/network}); a 404
+	 * on either means the host is not a UniFi OS console running the
+	 * Network application, such as a classic or self-hosted Network
+	 * controller, which this pack does not support.
+	 */
+	static String unifiOsRequired(Throwable t) {
+		Set<Throwable> seen = Collections.newSetFromMap(new IdentityHashMap<>());
+		for (Throwable c = t; c != null && seen.add(c); c = c.getCause()) {
+			if (c instanceof UniFiHttpException
+					&& ((UniFiHttpException) c).status() == 404) {
+				String what = ((UniFiHttpException) c).isLogin()
+						? "the UniFi OS login (/api/auth/login)"
+						: "the UniFi OS Network application (/proxy/network)";
+				return "This adapter supports UniFi OS consoles only: "
+						+ what + " returned HTTP 404 on this host. Classic "
+						+ "and self-hosted UniFi Network controllers are not "
+						+ "supported. Point the adapter at the UniFi OS "
+						+ "console, port 443, with the Network application "
+						+ "installed.";
+			}
+		}
+		return null;
+	}
 }

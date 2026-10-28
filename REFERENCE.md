@@ -1,6 +1,6 @@
 # VCF Content Factory UniFi Controller: Reference
 
-Generated from `describe.xml` and `resources.properties` for build 17 (dev 0.0.0.17).
+Generated from `describe.xml` and `resources.properties` for build 18 (dev 0.0.0.18).
 
 ## Adapter
 
@@ -382,6 +382,19 @@ Generated from `describe.xml` and `resources.properties` for build 17 (dev 0.0.0
 | `total_bytes` | Total | metric | bytes | yes |
 | `usage_pct` | Usage % | metric | % | yes |
 
+> Build 18 (issue #39): bytes, from the Protect bootstrap's
+> `nvr.systemInfo.storage` (`size`, `used`: the recording volume; on the
+> devel UDM Pro the console reports the same total as the primary space's
+> `total_bytes`), or, only when that pair is missing,
+> `nvr.storageStats.recordingSpace` (`total`, `used`: Protect's share of
+> the volume). A total and a used are never taken from different sources.
+> All three are published together and only when a usable pair is sent
+> (total above 0, used not negative); `usage_pct` is used / total * 100.
+> Builds up to 17 read `nvr.storageInfo`, which current Protect does not
+> send, so the three never published. Protect fills the volume and then
+> recycles the oldest footage, so a usage near 100 % is normal for a
+> recording NVR (devel: 99.1 %).
+
 #### Configuration
 
 | Key | Label | Type | Unit | Monitored |
@@ -453,15 +466,50 @@ unifi_controller
     └── UniFi World
         └── UniFi Site
             ├── UniFi Gateway
-            │   └── UniFi WAN Interface
-            ├── UniFi Switch
-            │   └── UniFi Switch Port
-            ├── UniFi Access Point
+            │   ├── UniFi WAN Interface
+            │   ├── UniFi Switch (nested) ...
+            │   └── UniFi Access Point (nested) ...
+            ├── UniFi Switch (nested: a switch under a switch, any depth)
+            │   ├── UniFi Switch Port
+            │   └── UniFi Access Point (nested: an AP under an AP, any depth)
+            │       └── UniFi Radio
+            ├── UniFi Access Point (nested)
             │   └── UniFi Radio
             ├── UniFi NVR
             │   └── UniFi Camera
             └── UniFi Wireless Summary
 ```
+
+Build 18 (issue #15): a switch or access point is a child of the device
+it uplinks to (`uplink.uplink_mac`), so the tree follows the cabling and a
+device going down shows on everything behind it, as vSphere's Cluster >
+Host > VM does. Nesting follows Gateway > Switch (any depth) > Access Point
+(any depth); describe.xml declares the repeated levels with
+`::child/recursive`, the form VMware's own vSphere Hosts and Clusters
+traversal uses for host folders. A device is placed directly under its
+Site, and logged once at INFO, when its uplink is not a discovered device of
+the site, when the uplinks loop (every device on the loop), or when the pair
+cannot nest in the tree (a switch behind an access point, through a wireless
+or pass-through uplink). A gateway is always under its Site. The devel
+console (17 devices) nests up to five deep below the gateway: Switch >
+Switch > Switch > Switch > Access Point, and an access point behind an
+in-wall access point.
+
+### Object names
+
+Build 18 (issue #27, item 4): an object that exists once per parent is
+named `<label> (<parent>)`, the form Broadcom's own adapters use (for
+example vSAN "Storage Pool (<host>)"): switch ports `Port 3 (<switch>)` (or
+`<custom port name> (<switch>)`), WAN interfaces `WAN 1 (<gateway>)`,
+radios `5 GHz (<access point>)`, and `Wireless Summary (<site>)`. The
+parent's name is its display name (a device's name, or model and MAC tail
+when it has none; a site's description). Only the name changes, never the
+identifier, so an object keeps its history. Per the adapter SDK, VCF
+Operations keeps the name of an object it already has unless the adapter
+opts into renames (`isResourceRenameAllowed`, off by default), and this
+pack does not, so objects discovered before build 18 are expected to keep
+their old names and objects discovered from build 18 on get the new ones
+(see CHANGELOG, build 18; not yet seen on an upgraded instance).
 
 ---
 

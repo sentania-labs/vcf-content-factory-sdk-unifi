@@ -12,6 +12,7 @@ public final class UniFiIdsTest {
 		siteSegment();
 		radioGuard();
 		discoveredDevices();
+		childName();
 		System.out.println("UniFiIdsTest: all assertions passed");
 	}
 
@@ -72,5 +73,17 @@ public final class UniFiIdsTest {
 				"space is %20, not +");
 		T.eq("100%25", UniFiIds.pathSegment("100%"), "percent encoded");
 		T.eq("caf%C3%A9", UniFiIds.pathSegment("café"), "UTF-8");
+	}
+
+	/** Build 18 (#27 item 4): "<label> (<parent>)", Broadcom's form. */
+	static void childName() {
+		T.eq("Port 3 (USW Office)", UniFiIds.childName("Port 3", "USW Office"), "port");
+		T.eq("WAN 1 (Bentwood)", UniFiIds.childName("WAN 1", "Bentwood"), "wan");
+		T.eq("5 GHz (U6 Lobby)", UniFiIds.childName("5 GHz", "U6 Lobby"), "radio");
+		T.eq("Wireless Summary (Default)",
+				UniFiIds.childName("Wireless Summary", "Default"), "aggregate");
+		T.eq("Uplink (USW)", UniFiIds.childName("Uplink", " USW "), "custom port name, trimmed parent");
+		T.eq("Port 3", UniFiIds.childName("Port 3", null), "no parent name");
+		T.eq("Port 3", UniFiIds.childName("Port 3", "  "), "blank parent name");
 	}
 }

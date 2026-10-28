@@ -135,6 +135,15 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 	private volatile UniFiStitcher stitcher;
 
 	/**
+	 * Build 18 (issue #15): the uplink fallbacks already logged ({@code
+	 * site|mac|reason}), so a device placed under its Site because of an
+	 * uplink loop, an unknown uplink or a nesting the tree cannot show is
+	 * logged once at INFO, not every cycle. Bounded by the device count.
+	 */
+	private final Set<String> loggedUplinkFallbacks =
+			java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+	/**
 	 * Per-cycle snapshot of the UniFi API responses, shared across all
 	 * per-resource {@code collect()} calls within one collection cycle, lives in
 	 * the {@link SnapshotCache} of the current {@link Configured} holder.
@@ -434,7 +443,16 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 			try {
 				UniFiApiClient testApi = new UniFiApiClient(testHttp.main,
 						apiLog);
-				SimpleJson sites = testApi.listSites();
+				SimpleJson sites;
+				try {
+					sites = testApi.listSites();
+				} catch (Exception e) {
+					// Build 18 (issue #17): a 404 on the login or the
+					// Network path names the requirement.
+					String unifiOs = UniFiFailures.unifiOsRequired(e);
+					if (unifiOs != null) throw new IOException(unifiOs, e);
+					throw e;
+				}
 				SimpleJson data = sites.get("data");
 				if (data.isNull() || !data.isList()) {
 					throw new IOException("UniFi /self/sites returned a 200 payload "
@@ -563,12 +581,14 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 					sink.accept(rcOf("UniFiGateway", name, "mac", mac));
 					gateways++;
 					if (!dev.get("wan1").isNull()) {
-						sink.accept(rcOf("UniFiWanInterface", "WAN 1",
+						sink.accept(rcOf("UniFiWanInterface",
+								UniFiIds.childName("WAN 1", name),
 								"wan_name", mac + "_wan1"));
 						wans++;
 					}
 					if (!dev.get("wan2").isNull()) {
-						sink.accept(rcOf("UniFiWanInterface", "WAN 2",
+						sink.accept(rcOf("UniFiWanInterface",
+								UniFiIds.childName("WAN 2", name),
 								"wan_name", mac + "_wan2"));
 						wans++;
 					}
@@ -581,7 +601,7 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 							Integer idx = portIdx(port);
 							if (idx == null) continue; // #23: never <mac>_0
 							sink.accept(rcOf("UniFiSwitchPort",
-									portDisplayName(port, idx),
+									UniFiIds.childName(portDisplayName(port, idx), name),
 									"port_key", mac + "_" + idx));
 							ports++;
 						}
@@ -595,7 +615,7 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 							String radioCode = radioCode(radio);
 							if (radioCode == null) continue; // peer review 7
 							sink.accept(rcOf("UniFiRadio",
-									radioDisplayName(radioCode),
+									UniFiIds.childName(radioDisplayName(radioCode), name),
 									"radio_key", mac + "_" + radioCode));
 							radios++;
 						}
@@ -603,7 +623,8 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 				}
 			}
 
-			sink.accept(rcOf("UniFiWirelessAggregate", "Wireless Summary",
+			sink.accept(rcOf("UniFiWirelessAggregate",
+					UniFiIds.childName("Wireless Summary", siteDesc),
 					"aggregate_id", siteName + "_wlan_aggregate"));
 			aggregates++;
 		}
@@ -1322,13 +1343,22 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 					(System.currentTimeMillis() / 1000.0) - (upSince / 1000.0));
 		}
 
-		SimpleJson storage = nvr.get("storageInfo");
-		Double total = UniFiValues.number(storage.get("totalSize").asString());
-		Double used = UniFiValues.number(storage.get("usedSize").asString());
-		metricIfPresent(out, "Storage|total_bytes", total);
-		metricIfPresent(out, "Storage|used_bytes", used);
-		if (total != null && used != null && total > 0) {
-			metric(out, "Storage|usage_pct", (used / total) * 100.0);
+		// Build 18 (issue #39): Protect has no storageInfo (the build 15
+		// read never matched); the volume is systemInfo.storage, Protect's
+		// recording share storageStats.recordingSpace, both in bytes. One
+		// source per cycle, never a total from one and a used from the
+		// other; nothing when neither has a usable pair.
+		SimpleJson volume = nvr.get("systemInfo").get("storage");
+		SimpleJson recording = nvr.get("storageStats").get("recordingSpace");
+		double[] storage = UniFiValues.nvrStorage(
+				UniFiValues.number(volume.get("size").asString()),
+				UniFiValues.number(volume.get("used").asString()),
+				UniFiValues.number(recording.get("total").asString()),
+				UniFiValues.number(recording.get("used").asString()));
+		if (storage != null) {
+			metric(out, "Storage|total_bytes", storage[0]);
+			metric(out, "Storage|used_bytes", storage[1]);
+			metric(out, "Storage|usage_pct", (storage[1] / storage[0]) * 100.0);
 		}
 
 		prop(out, "Configuration|model", nvr.get("modelKey").asString(""));
@@ -1426,6 +1456,8 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 
 			SimpleJson devices = s.devicesForSite(siteName);
 			Map<String, ResourceKey> deviceByMac = new HashMap<>();
+			// Build 18 (issue #15): the uplink graph, resolved below.
+			List<UplinkTree.Node> uplinkNodes = new ArrayList<>();
 
 			for (SimpleJson dev : devices.get("data").asList()) {
 				String type = dev.get("type").asString("");
@@ -1438,11 +1470,13 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 				if (isGateway(type)) {
 					devKey = rb.resource("UniFiGateway", name, "mac", mac);
 					if (!dev.get("wan1").isNull()) {
-						rb.parent(devKey, rb.resource("UniFiWanInterface", "WAN 1",
+						rb.parent(devKey, rb.resource("UniFiWanInterface",
+								UniFiIds.childName("WAN 1", name),
 								"wan_name", mac + "_wan1"));
 					}
 					if (!dev.get("wan2").isNull()) {
-						rb.parent(devKey, rb.resource("UniFiWanInterface", "WAN 2",
+						rb.parent(devKey, rb.resource("UniFiWanInterface",
+								UniFiIds.childName("WAN 2", name),
 								"wan_name", mac + "_wan2"));
 					}
 				} else if ("usw".equals(type)) {
@@ -1453,7 +1487,7 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 							Integer idx = portIdx(port);
 							if (idx == null) continue; // build 15, issue #23
 							rb.parent(devKey, rb.resource("UniFiSwitchPort",
-									portDisplayName(port, idx),
+									UniFiIds.childName(portDisplayName(port, idx), name),
 									"port_key", mac + "_" + idx));
 						}
 					}
@@ -1465,32 +1499,42 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 							String code = radioCode(radio);
 							if (code == null) continue; // peer review 7
 							rb.parent(devKey, rb.resource("UniFiRadio",
-									radioDisplayName(code), "radio_key", mac + "_" + code));
+									UniFiIds.childName(radioDisplayName(code), name),
+									"radio_key", mac + "_" + code));
 						}
 					}
 				} else {
 					continue;
 				}
 				deviceByMac.put(mac, devKey);
+				uplinkNodes.add(new UplinkTree.Node(mac, uplinkKind(type),
+						dev.get("uplink").get("uplink_mac").asString("")));
 			}
 
-			// Wire device topology by uplink_mac; no uplink → direct child of site.
-			for (SimpleJson dev : devices.get("data").asList()) {
-				String mac = deviceMac(dev);
-				if (mac == null) continue; // build 15, issue #23
-				ResourceKey devKey = deviceByMac.get(mac);
-				if (devKey == null) continue;
-				String uplinkMac = dev.get("uplink").get("uplink_mac").asString("");
-				ResourceKey parentKey = deviceByMac.get(uplinkMac);
-				if (parentKey != null && !uplinkMac.equals(mac)) {
-					rb.parent(parentKey, devKey);
-				} else {
-					rb.parent(siteKey, devKey);
+			// Build 18 (issue #15): each device under its uplink device when
+			// the pair fits the navigation tree (Gateway > Switch*, then
+			// Access Point*), else under the Site; an uplink loop, or an
+			// uplink to an unknown device, falls back to the Site and is
+			// logged once at INFO (UplinkTree).
+			UplinkTree.Result tree = UplinkTree.resolve(uplinkNodes);
+			for (UplinkTree.Node n : uplinkNodes) {
+				ResourceKey devKey = deviceByMac.get(n.mac);
+				String parentMac = tree.parent.get(n.mac);
+				ResourceKey parentKey = parentMac == null ? null
+						: deviceByMac.get(parentMac);
+				rb.parent(parentKey != null ? parentKey : siteKey, devKey);
+				UplinkTree.Reason why = tree.fallback.get(n.mac);
+				if (why != null && loggedUplinkFallbacks.add(
+						siteName + "|" + n.mac + "|" + why)) {
+					logInfo("Topology: device " + n.mac + " in site " + siteName
+							+ " is placed directly under the site because "
+							+ why.text + " (uplink " + n.uplinkMac + ")");
 				}
 			}
 
 			rb.parent(siteKey, rb.resource("UniFiWirelessAggregate",
-					"Wireless Summary", "aggregate_id", siteName + "_wlan_aggregate"));
+					UniFiIds.childName("Wireless Summary", siteDesc),
+					"aggregate_id", siteName + "_wlan_aggregate"));
 		}
 
 		// Protect: NVR → child of first site; cameras → child of NVR (v1 heuristic).
@@ -1535,8 +1579,9 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 		// dead controller-side LLDP read).
 		emitVmnicHostStitch(rb, s);
 
-		logInfo("Relationships built: World>Site>{Gateway>WAN, Switch>Port, "
-				+ "AP>Radio, WirelessAggregate, NVR>Camera} tree"
+		logInfo("Relationships built: World>Site>{Gateway>WAN, "
+				+ "[Gateway>]Switch*>Port, [Gateway>][Switch*>]AP*>Radio, "
+				+ "WirelessAggregate, NVR>Camera} tree"
 				+ (stitcher != null ? " + vmnic→port stitch" : ""));
 		return rb.build();
 	}
@@ -1608,6 +1653,13 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 	/** Build 15 (issue #23): the port index, or null when it has none. */
 	private static Integer portIdx(SimpleJson port) {
 		return UniFiIds.portIdx(port.get("port_idx").asString());
+	}
+
+	/** Build 18 (issue #15): a registered device's kind in the uplink tree. */
+	private static UplinkTree.Kind uplinkKind(String type) {
+		if (isGateway(type)) return UplinkTree.Kind.GATEWAY;
+		return "usw".equals(type) ? UplinkTree.Kind.SWITCH
+				: UplinkTree.Kind.ACCESS_POINT;
 	}
 
 	private static String deviceDisplayName(SimpleJson dev) {
@@ -2212,7 +2264,10 @@ public final class UniFiAdapter extends VcfCfAdapter<UniFiConfig> {
 					if (idx2 == null) continue; // build 15, issue #23
 					String portKey = switchMac + "_" + idx2;
 					String portName = portDisplayName(port, idx2);
-					OwnPort candidate = new OwnPort(portKey, portName);
+					// Build 18 (#27 item 4): the edge carries the port's
+					// resource name; the join aliases stay the bare labels.
+					OwnPort candidate = new OwnPort(portKey,
+							UniFiIds.childName(portName, deviceDisplayName(dev)));
 					// Dedup via a Set: same joint key from both aliases when
 					// display name == hardware label must not double-count
 					// into a spurious ambiguity.

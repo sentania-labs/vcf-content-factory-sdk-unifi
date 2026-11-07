@@ -207,3 +207,7 @@ before your own `v*` tags will build (it already runs on GitHub-hosted
    alone is not enough — if you leave `--sdk-jar _sdk_runtime/...` in
    place the build will look for the upstream path and fail. Do **not**
    commit the jar to a public repo (no redistribution).
+
+## License
+
+MIT, see `LICENSE` in this repository (the same license as the VCF Content Factory).
